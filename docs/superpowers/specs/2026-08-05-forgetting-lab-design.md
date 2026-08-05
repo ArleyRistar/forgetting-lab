@@ -190,7 +190,52 @@ run babysitting, analysis drafts, edit passes on Arley's prose.
 - No vision CL; no local chat-assistant hosting; no hardware purchases; no
   production-grade tooling polish.
 
-## 11. Open questions (resolved via design cards, not now)
+## 11. Direction review — OPEN, blocks phase 1c (raised 2026-08-05)
+
+Arley's objection: in common practice, low-bit models are produced *from*
+trained full-precision models, so studying forgetting "in the ternary model"
+may be studying an artifact rather than a real training regime.
+
+Fact status (verified 2026-08-05): at 4–8 bits the objection is exactly right
+(GPTQ/AWQ-style PTQ). At 1.58 bits it inverts — ternary PTQ collapses quality,
+so the flagship ternary models (BitNet b1.58-2B4T, Spectra TriLMs,
+[Falcon-E](https://falcon-lm.github.io/blog/falcon-edge/)) are trained from
+scratch with QAT. The conversion route that does exist
+([HF Llama3-8B→1.58bit](https://huggingface.co/blog/1_58_llm_extreme_quantization),
+[2502.11895](https://arxiv.org/abs/2502.11895)) is itself continued QAT
+training on 10–100B tokens, not a post-hoc transform. Either way, sequential
+updates to a ternary model happen in QAT space — the object of study exists on
+every route to ternary.
+
+What survives of the objection (kernel to settle before phase 1c spends
+compute):
+
+- **Deployment realism.** Who sequentially updates ternary models in practice —
+  and does the motivation section survive the fact that QAT fine-tuning needs
+  full float latents (weakening the "on-device learning" story)?
+- **Route realism.** If conversion-from-float becomes the dominant production
+  route, a from-scratch pair studies the less-real object.
+
+Routes on the table:
+
+- **Route A (current §6 plan):** pretrain a matched ~100M ternary/float pair
+  from scratch. Mirrors how flagship ternary models are made; cleanest control;
+  ~100–150 GPU-h before any experiment; evals near floor at 100M.
+- **Route B (from the objection):** take a public float model (e.g.
+  SmolLM2-360M) and ternarize it via continued QAT. The float weights *are*
+  the initial latents, so we own the full latent trajectory without
+  pretraining; capabilities (and evals) far above floor; directly studies the
+  conversion route. Confound: the conversion quality gap must be measured and
+  argued around.
+- **Route C:** B first as a cheap pilot (doubles as the QAT-recipe shakedown),
+  A only if B shows signal — and then route-to-ternary itself becomes a
+  studied variable (does provenance change forgetting?).
+
+To verify: whether Falcon-E's released bf16 revision is the true QAT master
+weights from its single-run paradigm (if yes, the "no public latents" premise
+weakens and a rented-GPU Falcon-E-1B arm becomes an alternative to Route A).
+
+## 12. Open questions (resolved via design cards, not now)
 
 1. Pretraining corpus and token budget for the 100–135M pair (candidate:
    FineWeb-Edu sample; budget set after the 50M pilot).
