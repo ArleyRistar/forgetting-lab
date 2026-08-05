@@ -34,6 +34,9 @@ Hypotheses, in priority order:
   as measurement, not advocacy; a clean no-difference result is still a finding.
   Must engage the oscillation literature: flip *persistence* (does a flip stick?)
   is measured separately from flip *count*.
+- **H3 (tertiary, unlocked only by phase-2 escalation):** does the route to
+  ternary — born-ternary (from-scratch QAT) vs. converted-from-float — change
+  forgetting behaviour? No published work touches this.
 
 ## 2. Context & constraints
 
@@ -66,9 +69,10 @@ What the 8 GB card supports (bf16, gradient checkpointing, 8-bit optimizer):
 - Float: full fine-tune ≤360M; LoRA ≤2B at seq 512–1024.
 - Ternary QAT: costs ~1.3–1.5× float training per parameter (latent weights +
   materialised quantized tensors) and **has no PEFT escape hatch** — full
-  fine-tuning only. Local ternary ceiling ≈ **350–560M**.
-- Pretraining a ~100–135M model from scratch on a few billion tokens: feasible;
-  order 50–100 unattended GPU-h per model.
+  fine-tuning only. Local ternary ceiling ≈ **350–560M**. Full QAT training of
+  a 360M model ≈ 3–4 GB with 8-bit Adam — Route B fits locally with headroom.
+- Pretraining a ~100–135M model from scratch on a few billion tokens: feasible
+  (order 50–100 unattended GPU-h per model) — **Route A, only if escalated**.
 - Evaluation: lm-evaluation-harness ≤2B bf16.
 
 If an approved experiment needs more than this, rent an hourly cloud GPU for
@@ -88,7 +92,7 @@ script so Arley can explain it end to end.
 
 Deliverable: one reproducible "hello training" run.
 
-## 6. Phase 1 — build the instrument (weeks 2–10)
+## 6. Phase 1 — build the instrument (weeks 2–8)
 
 Everything in this phase exists to make the §1 question answerable.
 
@@ -106,13 +110,19 @@ the only published small-model sequential-FT protocol that fits this card.
 Our trends must match theirs before any result-bearing run. Also: one synthetic
 forgetting control with an analytically known answer.
 
-**1c. Matched-pair pretraining.** Pretrain from scratch at ~100–135M:
-one ternary model (BitNet b1.58-style QAT) and one float twin — same data,
-tokenizer, architecture and schedule. This is required because **no public
-ternary checkpoint releases its QAT latent weights** (Spectra ships only
-ternarized values; Falcon-E re-initialises latents to centroids), and the
-latent-weight trajectory is exactly what H1/H2 measure. Save full latent
-checkpoints throughout. Budget: ~100–150 unattended GPU-h for the pair.
+**1c. Ternarize-and-own (Route B).** Convert a public float model
+(SmolLM2-360M) to ternary via continued QAT — BitLinear injection plus the
+quantization-warmup recipe from the
+[HF Llama3→1.58bit work](https://huggingface.co/blog/1_58_llm_extreme_quantization).
+At the moment of conversion the float weights *are* the initial latent weights,
+so we own the full latent trajectory without pretraining anything — necessary
+because **no public ternary checkpoint releases usable QAT latent weights**
+(verified 2026-08-05; see §11). The float twin is the same SmolLM2-360M
+continued-trained in bf16 **on the same tokens** (data-matched — otherwise the
+conversion corpus confounds the comparison). Measure and report the conversion
+quality gap. Shakedown the recipe at 135M first. Save full latent checkpoints
+throughout. Budget: ~30–80 unattended GPU-h for the pair. From-scratch
+pretraining (Route A) is explicitly deferred to phase-2 escalation.
 
 **1d. Instrumentation.** Per layer, per logging interval: ternary flip
 fraction, flip persistence, latent distance-to-threshold histograms; for the
@@ -121,30 +131,38 @@ absmean scale, so thresholds move — a weight can flip without moving.
 Instrument accordingly (flips are defined by effective-value change, not
 latent-value change).
 
-**Eval design for ~100M models:** benchmark accuracies (MMLU/GSM8K/IFEval) are
-at floor at this scale and would masquerade as "no forgetting". Use
-likelihood-based probes — held-out-fact NLL, per-token loss on task data — plus
-chance-adjusted accuracy metrics (framework:
-[2510.17776](https://arxiv.org/abs/2510.17776)) where accuracy is used at all.
+**Eval design:** the converted 360M pair retains its parent's capabilities, so
+benchmark subsets become usable where a from-scratch 100M model would sit at
+chance. Likelihood-based probes — held-out-fact NLL, per-token loss on task
+data — remain primary (they stay sensitive where accuracies floor or
+saturate), with chance-adjusted accuracy metrics (framework:
+[2510.17776](https://arxiv.org/abs/2510.17776)) wherever accuracy is used.
 
 Deliverables: rig re-runnable from a commit hash; calibration note (blog #1);
-the matched model pair with latent-weight history.
+the converted ternary/float pair with full latent history from conversion
+onward.
 
 ## 7. Phase 2 — the experiment (months ~3–6)
 
-Sequential fine-tuning of the matched pair on a task sequence a ~100M model can
-actually learn (domain-shift LM corpora + synthetic fact-recall probes; final
-design via design cards). ≥3 seeds on all result-bearing runs; conclusions from
-paired comparisons only.
+Sequential fine-tuning of the converted 360M pair (domain-shift LM corpora +
+synthetic fact-recall probes; final design via design cards). ≥3 seeds on all
+result-bearing runs; conclusions from paired comparisons only.
 
 - **Primary analysis (H1):** predictive power of flip-fraction/persistence for
   per-task forgetting in the ternary model vs. parameter-distance predictors in
   the float twin — per layer and global.
 - **Secondary (H2):** forgetting-curve shape comparison at matched capability —
   magnitude, burstiness, learning-rate sensitivity.
-- **Confirmatory arm:** repeat the behavioural (not latent) measurements on
-  Spectra TriLMs 99M–560M and/or Falcon-E, with the centroid-initialisation
-  caveat documented.
+- **Escalation ladder (each step needs its own design card):**
+  1. Route A — from-scratch matched pair at ~100M, only if the Route B pilot
+     shows signal; unlocks H3 (provenance comparison, converted vs. born-ternary).
+  2. Rented arm — BitNet-b1.58-2B4T from its **true bf16 master weights** (the
+     only public ternary checkpoint with real latents; full QAT fine-tune fits
+     a rented 24 GB card): the same measurements on a production-grade
+     born-ternary model.
+  3. Behavioural-only confirmatory arm on Spectra TriLMs 99M–560M and/or
+     Falcon-E `prequantized`, with the centroid-initialisation caveat
+     documented.
 
 Outputs: a write-up Arley authors; venue optional (CoLLAs 2027 or a NeurIPS/ICML
 workshop if the result earns it); blog #2/#3. Honest fallback if the question
@@ -160,11 +178,13 @@ run babysitting, analysis drafts, edit passes on Arley's prose.
 
 ## 9. Risks
 
-- **QAT recipe fiddliness** — ternary pretraining at small scale is
-  reproducible (BitNet recipes, Spectra paper) but hyperparameter-sensitive.
-  Mitigation: pilot at 50M before the real pair; budget one restart.
-- **Pair quality too low to measure forgetting** — mitigation: NLL-probe eval
-  design (§6), token-budget check at pilot stage.
+- **QAT recipe fiddliness** — ternary conversion is documented (HF recipe,
+  onebitllms) but hyperparameter-sensitive, and warmup-quantization behaves
+  differently at small scale. Mitigation: shakedown at 135M; budget one restart.
+- **Conversion-gap confound** — the ternary twin starts weaker than its float
+  twin. Mitigation: data-matched twins (§6 1c), report the gap, and measure
+  forgetting relative to each model's own post-conversion baseline, never
+  cross-model absolutes.
 - **Oscillation confound** (near-threshold weights flip noisily) — mitigation:
   flip persistence as a first-class metric, H1 framed to survive it.
 - **Eval as hidden compute cost** — mitigation: 40 GPU-h card cap; mid-stage
@@ -190,7 +210,7 @@ run babysitting, analysis drafts, edit passes on Arley's prose.
 - No vision CL; no local chat-assistant hosting; no hardware purchases; no
   production-grade tooling polish.
 
-## 11. Direction review — OPEN, blocks phase 1c (raised 2026-08-05)
+## 11. Direction review — RESOLVED 2026-08-05: Route C (raised 2026-08-05)
 
 Arley's objection: in common practice, low-bit models are produced *from*
 trained full-precision models, so studying forgetting "in the ternary model"
@@ -216,32 +236,34 @@ compute):
 - **Route realism.** If conversion-from-float becomes the dominant production
   route, a from-scratch pair studies the less-real object.
 
-Routes on the table:
+**Decision (Arley, 2026-08-05): Route C.** Route B first — ternarize
+SmolLM2-360M via continued QAT (§6 1c): cheap, real latents from conversion
+step zero, evals above floor, and it directly studies the conversion route the
+objection considers realistic. Route A (from-scratch matched pair) deferred to
+phase-2 escalation, where provenance becomes hypothesis H3. (Considered
+alternatives: A-first — cleanest control but ~150 GPU-h before any signal and
+floor-level evals at 100M; B-only — loses the provenance question.)
 
-- **Route A (current §6 plan):** pretrain a matched ~100M ternary/float pair
-  from scratch. Mirrors how flagship ternary models are made; cleanest control;
-  ~100–150 GPU-h before any experiment; evals near floor at 100M.
-- **Route B (from the objection):** take a public float model (e.g.
-  SmolLM2-360M) and ternarize it via continued QAT. The float weights *are*
-  the initial latents, so we own the full latent trajectory without
-  pretraining; capabilities (and evals) far above floor; directly studies the
-  conversion route. Confound: the conversion quality gap must be measured and
-  argued around.
-- **Route C:** B first as a cheap pilot (doubles as the QAT-recipe shakedown),
-  A only if B shows signal — and then route-to-ternary itself becomes a
-  studied variable (does provenance change forgetting?).
-
-To verify: whether Falcon-E's released bf16 revision is the true QAT master
-weights from its single-run paradigm (if yes, the "no public latents" premise
-weakens and a rented-GPU Falcon-E-1B arm becomes an alternative to Route A).
+**Falcon-E verification (2026-08-05):** its bfloat16 revision is **not** the
+QAT master weights. The
+[Falcon-E blog](https://falcon-lm.github.io/blog/falcon-edge/) describes it as
+a scale-injection *approximation* reconstructed from the ternary weights
+("injecting the weight scale after quantizing the weights should lead to a
+good enough 'approximation' of the non-BitNet version"), and
+[onebitllms](https://github.com/tiiuae/onebitllms) fine-tunes from the
+`prequantized` revision (LoRA explicitly unsupported). So the "no public
+latents" premise stands — with one exception:
+[BitNet-b1.58-2B4T-bf16](https://huggingface.co/microsoft/bitnet-b1.58-2B-4T-bf16)
+ships genuine master weights, too large for 8 GB but viable on a rented 24 GB
+card → recorded as escalation step 2 in §7.
 
 ## 12. Open questions (resolved via design cards, not now)
 
-1. Pretraining corpus and token budget for the 100–135M pair (candidate:
-   FineWeb-Edu sample; budget set after the 50M pilot).
-2. QAT codebase: adapt a BitNet b1.58 reference recipe vs. Spectra's
-   ternarization — decide in phase 1a after reading both.
-3. Task-sequence design learnable at 100M scale (domain shifts vs. synthetic
-   fact sets vs. both).
+1. Conversion corpus and token budget for the 360M pair (candidate:
+   FineWeb-Edu sample; set after the 135M shakedown).
+2. QAT codebase: onebitllms vs. the HF Llama3→1.58bit recipe vs. a nanotron
+   BitNet recipe — decide in phase 1a after reading all three.
+3. Task-sequence design at 360M scale (domain shifts vs. synthetic fact sets
+   vs. both).
 4. Exact flip-persistence metric definition (window length, per-layer vs.
    global).
