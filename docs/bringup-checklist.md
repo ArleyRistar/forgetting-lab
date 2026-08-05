@@ -117,11 +117,14 @@ curl -fsSL https://claude.ai/install.sh | bash    # Claude Code, then: claude lo
 
 ## 10. Repo transfer — D2
 
-**Option A (recommended): private GitHub repo.** Two machines will share this
-repo constantly. Tell Claude on the Zenbook "create the private repo and push"
-— explicit go-ahead required, nothing is pushed by default. Then here:
-`git clone git@github.com:ArleyRistar/forgetting-lab.git ~/forgetting-lab`
-(needs an SSH key on this box added to GitHub: `ssh-keygen -t ed25519`).
+**Option A (done 2026-08-05): private repo at
+`github.com/ArleyRistar/forgetting-lab`.** On the lab box:
+
+```bash
+sudo dnf install -y gh
+gh auth login          # browser flow, ArleyRistar account, HTTPS protocol
+gh repo clone ArleyRistar/forgetting-lab ~/forgetting-lab
+```
 
 **Option B (LAN only, no remote):** on the Zenbook:
 `cd ~/personal/forgetting-lab && git bundle create /tmp/flab.bundle main && scp /tmp/flab.bundle arley@gs66-lab.local:~`
