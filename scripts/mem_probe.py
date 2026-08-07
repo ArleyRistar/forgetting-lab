@@ -66,7 +66,11 @@ def main() -> None:
             per_device_train_batch_size=4,
             gradient_accumulation_steps=4,
             learning_rate=1e-5,
-            bf16=args.dtype == "bfloat16",
+            # Always autocast: --dtype bfloat16 gives pure bf16 training, while
+            # --dtype float32 gives mixed precision with fp32 master weights.
+            # Those are the two configurations a QAT recipe would actually pick;
+            # pure-fp32 compute is not one of them.
+            bf16=True,
             gradient_checkpointing=True,
             max_length=1024,
             optim=args.optim,
