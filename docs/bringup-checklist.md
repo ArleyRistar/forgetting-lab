@@ -146,3 +146,39 @@ then here: `git clone -b main ~/flab.bundle ~/forgetting-lab`.
 
 Then, on the lab box: `cd ~/forgetting-lab && claude`, and point the session at
 `docs/superpowers/plans/2026-08-05-phase-0-smoke-test.md`.
+
+---
+
+## As-built notes (2026-08-07)
+
+Bring-up was split: the lab box's own Claude session did the console/sudo/ssh
+groundwork, then the rest was driven remotely from the Zenbook.
+
+Deviations from the checklist above:
+
+- **Disk was not wiped** — Fedora installed alongside Windows; root is
+  `nvme0n1p6` (~627 GB). Deliberate (Arley's call).
+- **Hostname** started as `fedora`, renamed to `gs66-lab`. `ssh lab` is the
+  alias on the Zenbook (`~/.ssh/config`); mDNS resolves `gs66-lab.local`.
+- **Auth is keys-only.** The box's first session left
+  `PasswordAuthentication yes` in `/etc/ssh/sshd_config.d/10-lab.conf`; a later
+  `90-keys-only.conf` did **not** override it, because **sshd uses the FIRST
+  value it reads, not the last**. Fixed by editing `10-lab.conf` itself and
+  deleting the redundant file. Always confirm with `sudo sshd -T | grep -i
+  passwordauth`, never by reading the drop-in files.
+- **GOTCHA — closing the wide UDP range breaks `.local` resolution.** The
+  `FedoraWorkstation` zone's default `1025-65535/udp` is what carries mDNS
+  (5353/udp). Removing it silently killed `gs66-lab.local`. Fix:
+  `firewall-cmd --permanent --zone=FedoraWorkstation --add-service=mdns`.
+- **GUI kept but neutered**, not removed: `multi-user.target` boot plus
+  `systemctl mask gdm`. Measured cost of removal-vs-disable: GNOME uses 966 MB
+  only while running (zero at multi-user.target), and a full purge would
+  reclaim ~2 GB of 618 GB free while risking the CUDA/X shared libraries.
+  Leaf desktop apps *were* pruned (Firefox, LibreOffice, Evolution, GNOME apps,
+  leftover Anaconda installer): 2734 → 1948 packages, 1 GB freed, zero NVIDIA
+  or mesa driver packages touched. Reversible via `dnf history undo`.
+- **Battery charge cap unavailable** — this firmware exposes no
+  `charge_control_end_threshold`.
+- **NVIDIA 610.57.04** built for kernel 7.1.6-201.fc44 (the default boot
+  kernel). It cannot load until **Secure Boot is disabled** — the one remaining
+  manual step.
