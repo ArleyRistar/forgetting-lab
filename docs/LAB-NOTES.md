@@ -62,3 +62,74 @@ from fans/fins is cheap and a repaste would likely buy back some of the lost
   `nvidia-smi -q -d POWER | grep "Current Power Limit"` instead.
 - At 0% utilisation clocks jump to ~1620 MHz — high idle clocks are not a sign
   of load, so read utilisation alongside clocks.
+
+## 2026-08-07 — smoke run (phase 0, task 4)
+
+400-step LoRA SFT of SmolLM2-360M on `smol-smoltalk[:4000]`, seed 0, r=16,
+effective batch 16 (4 × 4 accumulation), max_length 1024, bf16 + gradient
+checkpointing, 1200 MHz clock cap active.
+
+| metric | start | end |
+| --- | --- | --- |
+| train loss | 1.456 (@20) | **1.255** |
+| eval loss (held-out 200) | 1.362 (@20) | **1.187** |
+| eval token accuracy | 0.6612 | **0.6903** |
+
+- **Wall clock: 50 min 16 s** for 400 steps (3016 s), average 7.54 s/step.
+- **Peak temps: 87 °C GPU, 95 °C CPU package.**
+- **VRAM: 1.86 GiB of 7.66 GiB.** Enormous headroom — the 8 GB card is nowhere
+  near the constraint at this scale. Revisit the spec's §4 envelope: bigger
+  batches, longer sequences, or a larger model are all affordable, and ternary
+  QAT full fine-tuning (no LoRA available) has far more room than the
+  350–560M ceiling previously estimated.
+- Adapter size: **34.8 MB** vs ~720 MB for the bf16 base model.
+
+### Thermal derate is the real constraint, not memory
+
+Step time degrades as the chassis heat-soaks — this is the single most important
+operational fact for planning experiments:
+
+| elapsed | step time |
+| --- | --- |
+| cold (steps 1–30) | 4.85 s |
+| ~10 min | 7.05 s |
+| ~20 min | 7.60 s |
+| ~25 min | 9.43 s |
+
+That is up to **1.9× slower than cold**, averaging 7.54 s over the run. Steady
+state takes 10+ minutes to reach, so **any thermal or throughput reading taken
+before ~15 minutes is misleading** (this was misjudged twice during bring-up).
+
+**Use ~1.9× the cold-start estimate when budgeting GPU-hours on design cards.**
+
+Mitigations: no Linux fan control exists (`msi_wmi_platform` exposes RPM
+read-only, no PWM; fans observed at 3600–4200 RPM against a ~5500–6000 ceiling),
+and the CPU is already 94% idle on the `powersave` governor at 400 MHz — so the
+92–95 °C CPU reading is GPU heat soaking through the shared heatpipe, not CPU
+work. There is no software fix. Physical remediation only: fan/fin cleaning
+(Arley planning), possible repaste, BIOS fan profile / Cooler Boost.
+
+Untested idea: a *lower* clock cap may raise average throughput by preventing
+the boost → overheat → hard-throttle oscillation. Worth an A/B (e.g. 1000 vs
+1200 MHz over 50 steps each).
+
+## Environment quirks — read before debugging anything
+
+1. **Python is pinned to 3.12** (`.python-version`). Fedora 44's system Python
+   is 3.14 with no dev headers, which makes triton fail to JIT-compile its CUDA
+   shim (`fatal error: cuda.h` / missing `Python.h`) and kills any training run.
+   Do not unpin: the low-bit packages phase 1 needs (`onebitllms`, bitsandbytes)
+   have no 3.14 wheels.
+2. **transformers 5.x renamed `torch_dtype` → `dtype`.** `SFTConfig(
+   model_init_kwargs={"dtype": "bfloat16"})` is correct here; the older name is
+   what most tutorials still show.
+3. Installed: torch 2.13.0+cu130, transformers 5.14.1, trl 1.9.2, peft 0.20.0.
+   TRL 1.9 uses `max_length` and `eval_strategy` (not `max_seq_length` /
+   `evaluation_strategy`).
+4. **`nvidia-smi -pl` is unsupported on this vBIOS**; only `-lgc` (clock cap)
+   works. `power.limit` reads `[N/A]`; use `nvidia-smi -q -d POWER`.
+5. `power.draw`'s **first sample is garbage** (~751 W).
+6. HF token is installed (user `arleyristar`); creds in
+   `~/secrets/huggingface-account-20260807.txt` on the Zenbook.
+7. Long runs: `ssh lab` → `tmux new -As <name>`. The box cannot suspend (sleep
+   targets masked) and boots headless to a console.
