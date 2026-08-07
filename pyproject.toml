@@ -10,7 +10,7 @@ dependencies = [
     "peft>=0.14",
     "trl>=0.20",
     "accelerate>=1.2",
-    "lm-eval>=0.4.8",
+    "lm-eval[ifeval]>=0.4.8",
     "tensorboard>=2.18",
 ]
 

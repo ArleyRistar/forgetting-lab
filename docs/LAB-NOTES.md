@@ -133,3 +133,34 @@ the boost → overheat → hard-throttle oscillation. Worth an A/B (e.g. 1000 vs
    `~/secrets/huggingface-account-20260807.txt` on the Zenbook.
 7. Long runs: `ssh lab` → `tmux new -As <name>`. The box cannot suspend (sleep
    targets masked) and boots headless to a console.
+
+## 2026-08-07 — evaluation + phase-0 close (tasks 5–6)
+
+- **Plan gap fixed:** IFEval needs optional extras. `lm-eval>=0.4.8` alone dies
+  with `ModuleNotFoundError: langdetect`; the dependency must be
+  **`lm-eval[ifeval]`** (pulls langdetect + immutabledict). Phase 1 eval
+  batteries will need the same.
+- **`--batch_size auto` works well** for loglikelihood tasks: ~190 it/s,
+  49,669 requests (arc_easy + hellaswag) in ~4 min at 4.3 GiB VRAM. But the
+  first progress sample claims a 64-hour ETA — another first-sample artifact,
+  same trap as `power.draw`. Ignore the first estimate on any progress bar here.
+- **IFEval is the expensive task by far:** generative, 541 prompts at ~12 s
+  each ≈ 1 h 50 m per model, GPU only ~52% utilised (sequential decoding, not
+  compute-bound). For phase-1 iteration use `--limit` on generative tasks, or
+  prefer likelihood-based probes — which the spec already favours for other
+  reasons.
+- **Clean-clone reproducibility verified:** fresh `git clone` → `uv sync` →
+  `pytest` passes (2 tests) on Python 3.12.13 with CUDA reachable.
+- Machine config: laptop panel powered off (`bl_power=4`) and
+  `consoleblank=60` added to the kernel cmdline, so the console self-blanks on
+  every boot.
+
+### Open at phase-0 close
+
+1. Before/after eval table — evals still running at handoff; collect from
+   `/tmp/eval-base.log` and `/tmp/eval-smoke.log` on the lab box (marker file
+   `/tmp/eval-done` appears when both finish) and append here.
+2. Clock-cap A/B (1000 vs 1200 MHz over ~50 steps each) to test whether a lower
+   cap raises *average* throughput by avoiding boost→throttle oscillation.
+3. Re-derive the spec §4 VRAM envelope from the measured 1.86 GiB usage — it is
+   far more permissive than assumed, which matters for ternary QAT sizing.
