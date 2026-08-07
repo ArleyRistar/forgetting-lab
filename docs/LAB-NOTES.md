@@ -250,6 +250,36 @@ SmolLM2-360M (no LoRA) reading `torch.cuda.max_memory_allocated`, under both
 the 8 vs 16 vs 6 B/param terms. Not run yet — the GPU was busy with the phase-0
 evals. **Queued as open item 4.**
 
+## 2026-08-07 — an unmerged LoRA adapter doubles generative eval cost
+
+Noticed while the phase-0 evals ran. Identical task (IFEval, 541 prompts),
+identical hardware, same 1200 MHz cap, `SW/HW Thermal Slowdown` both
+**Not Active** on the slower run — so this is not thermals:
+
+| run | s/it | total |
+| --- | --- | --- |
+| base SmolLM2-360M | 11.86 | 1 h 46 m |
+| same + LoRA adapter via `peft=` | **22.46** | ~3 h 22 m projected |
+
+**1.89× slower**, and the only variable is the unmerged adapter. Generative
+decoding is memory-bound and sequential, so the extra per-layer LoRA matmuls
+land on the critical path of every token rather than being absorbed into a
+large matmul the way they are during training.
+
+**Implication for phase 1:** the harness evaluates at *every stage boundary* of
+a sequential fine-tuning run (§6.1a). Paying a 1.89× tax on generative evals at
+every boundary would be a large fraction of the phase's compute budget. Merge
+the adapter (`merge_and_unload`) into a throwaway copy before evaluating, or
+stay on likelihood-based probes — which §6 already prefers for unrelated
+reasons, and which this makes doubly attractive.
+
+Not yet measured: whether the same 1.89× applies to loglikelihood tasks
+(arc_easy/hellaswag). Those are batched and compute-bound rather than
+decode-bound, so the penalty is likely much smaller — worth confirming before
+generalising this to all evaluation.
+
 ### Still open
 
 4. Measure full-FT memory directly (above) to validate the §4 table.
+5. Confirm whether the unmerged-adapter penalty also applies to batched
+   loglikelihood tasks, and if so add adapter-merging to the eval wrapper.
