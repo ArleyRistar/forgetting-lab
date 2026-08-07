@@ -79,9 +79,12 @@ checkpointing, 1200 MHz clock cap active.
 - **Peak temps: 87 °C GPU, 95 °C CPU package.**
 - **VRAM: 1.86 GiB of 7.66 GiB.** Enormous headroom — the 8 GB card is nowhere
   near the constraint at this scale. Revisit the spec's §4 envelope: bigger
-  batches, longer sequences, or a larger model are all affordable, and ternary
-  QAT full fine-tuning (no LoRA available) has far more room than the
-  350–560M ceiling previously estimated.
+  batches, longer sequences, or a larger model are all affordable.
+  **Correction (2026-08-07, see the re-derivation section below): the claim
+  originally made here — that ternary QAT "has far more room than the
+  350–560M ceiling previously estimated" — was over-read from a LoRA run.
+  A LoRA measurement constrains the activation term but says nothing about
+  full-fine-tune optimizer memory, which is what sets the QAT ceiling.**
 - Adapter size: **34.8 MB** vs ~720 MB for the bf16 base model.
 
 ### Thermal derate is the real constraint, not memory
@@ -162,5 +165,91 @@ the boost → overheat → hard-throttle oscillation. Worth an A/B (e.g. 1000 vs
    `/tmp/eval-done` appears when both finish) and append here.
 2. Clock-cap A/B (1000 vs 1200 MHz over ~50 steps each) to test whether a lower
    cap raises *average* throughput by avoiding boost→throttle oscillation.
-3. Re-derive the spec §4 VRAM envelope from the measured 1.86 GiB usage — it is
-   far more permissive than assumed, which matters for ternary QAT sizing.
+3. ~~Re-derive the spec §4 VRAM envelope~~ — **done 2026-08-07**, see below.
+   Outcome was not what the open item assumed; §4 updated.
+
+## 2026-08-07 — VRAM envelope re-derivation (open item 3)
+
+### What the 1.86 GiB actually decomposes to
+
+The figure came from `nvidia-smi --query-gpu=memory.used`, so it is
+**device-level and includes the CUDA context** — it is not
+`torch.cuda.max_memory_allocated`. Decomposing the peak (1905 MiB) for the
+task-4 run (SmolLM2-360M, LoRA r=16 on 7 projections, batch 4 × seq 1024,
+gradient checkpointing, AdamW):
+
+| term | MiB | basis |
+| --- | --- | --- |
+| CUDA context | 190 | **measured** on the box, not assumed |
+| base weights bf16 | 690 | 361.8M × 2 B |
+| LoRA weights fp32 | 33 | 8.68M × 4 B |
+| LoRA grads fp32 | 33 | |
+| Adam m+v fp32 | 66 | 8.68M × 8 B |
+| **activations + workspace** | **892** | residual |
+
+Arithmetic check that validates the parameter counts: 8,683,520 LoRA params at
+fp32 = 34,734,080 B against an actual `adapter_model.safetensors` of
+34,793,120 B (difference is the safetensors header). The adapter is stored
+**fp32**, not bf16.
+
+The 892 MiB residual closes plausibly: 384 MiB of bf16 LM-head logits
+(4 × 1024 × 49152 × 2 B) + 240 MiB of checkpointed layer boundaries
+(32 × 4 × 1024 × 960 × 2 B) + 268 MiB of recompute buffers, attention
+workspace and allocator fragmentation.
+
+**Planning fact:** activation memory here is dominated by the **logits**, which
+scale with `vocab × batch × seq` and are *independent of model size*. Every
+model in the SmolLM2 family shares the same 49k vocab, so this term does not
+shrink when you shrink the model — but halving batch or sequence length buys
+back ~190 MiB directly.
+
+### The resulting envelope
+
+Weights-and-optimizer budget = 7.5 GiB usable − context − activations
+= **6598 MiB**, or **~5.9 GiB with a 10% safety margin** at batch 4 × seq 1024.
+
+Note the context term **cancels**: it is subtracted from the usable total and
+also sits inside the measured 1905 MiB, so the budget reduces to
+`7680 − 1905 + weights_and_optimizer`. The ceilings below therefore do not
+depend on the one quantity that was ever estimated.
+
+| configuration | B/param | ceiling |
+| --- | --- | --- |
+| LoRA, base resident in bf16 | 2 | ~3.1B |
+| Full FT, bf16 + 8-bit Adam | 6 | ~1.04B |
+| Full FT, pure bf16 AdamW | 8 | ~780M |
+| Full FT, fp32 master + fp32 Adam | 16 | ~390M |
+| Ternary QAT, fp32 latent + 8-bit Adam | 8.2 | **~760M** |
+| Ternary QAT, fp32 latent + fp32 Adam | 16 | **~390M** |
+| Ternary QAT, all-fp32 + materialised copy | 18 | **~350M** |
+
+### The actual finding
+
+**The spec's 350–560M ternary ceiling was not too pessimistic — it was the
+all-fp32 end of a range the spec did not know it was quoting.** The ternary
+ceiling spans 350M → 760M, a 2.2× range, and *which end you get is a phase-1
+recipe decision* (latent-weight precision, optimizer bit-width, whether the
+materialised quantized tensor is fused per layer or held for all layers) —
+**not a property of the card**. §4 has been rewritten to say this.
+
+Consequence for phase 1c: if the ternarize-and-own recipe wants headroom above
+360M, the lever is **8-bit Adam (bitsandbytes)**, which alone moves the ceiling
+from ~390M to ~760M. bitsandbytes is installable here (Python is pinned to 3.12
+precisely so these wheels exist — see quirk 1).
+
+### Confidence, and what would settle it
+
+The activation term is **measured**. The per-parameter costs are **computed,
+not measured** — a LoRA run exercises optimizer state for 8.68M params, 2.4% of
+the model, so it cannot validate the full-fine-tune terms that dominate these
+ceilings. Treat the table as a design-time budget, not an empirical result.
+
+Cheapest thing that would convert it: a ~20-step full fine-tune of
+SmolLM2-360M (no LoRA) reading `torch.cuda.max_memory_allocated`, under both
+`adamw_torch` and `adamw_bnb_8bit`. ~5 minutes of GPU, and it directly measures
+the 8 vs 16 vs 6 B/param terms. Not run yet — the GPU was busy with the phase-0
+evals. **Queued as open item 4.**
+
+### Still open
+
+4. Measure full-FT memory directly (above) to validate the §4 table.

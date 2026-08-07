@@ -64,22 +64,57 @@ Hypotheses, in priority order:
 
 ## 4. Hardware envelope
 
-What the 8 GB card supports (bf16, gradient checkpointing, 8-bit optimizer):
+**Re-derived 2026-08-07 from measurements on the box** (working shown in
+`docs/LAB-NOTES.md`); the pre-bring-up estimates this replaces were roughly
+right but stated as hardware limits things that are actually recipe choices.
 
-- Float: full fine-tune ≤360M; LoRA ≤2B at seq 512–1024.
-- Ternary QAT: costs ~1.3–1.5× float training per parameter (latent weights +
-  materialised quantized tensors) and **has no PEFT escape hatch** — full
-  fine-tuning only. Local ternary ceiling ≈ **350–560M**. Full QAT training of
-  a 360M model ≈ 3–4 GB with 8-bit Adam — Route B fits locally with headroom.
+Usable VRAM is **7.5 GiB, not 8**. A LoRA SFT of SmolLM2-360M at batch 4 ×
+seq 1024 with gradient checkpointing peaks at 1.86 GiB, of which **892 MiB is
+activations + workspace** (measured) — dominated by LM-head logits, which scale
+with `vocab × batch × seq` and *not* with model size. That leaves a
+**~5.9 GiB weights-and-optimizer budget** at that batch and sequence length,
+including a 10% safety margin.
+
+Parameter ceilings follow from bytes-per-parameter:
+
+| configuration | B/param | ceiling |
+| --- | --- | --- |
+| LoRA, base resident in bf16 | 2 | ~3.1B — but activation-bound first; **keep ≤2B** |
+| Float full FT, bf16 + 8-bit Adam | 6 | ~1.04B |
+| Float full FT, pure bf16 AdamW | 8 | ~780M |
+| Float full FT, fp32 master + fp32 Adam | 16 | ~390M |
+| Ternary QAT, fp32 latent + 8-bit Adam | 8.2 | ~760M |
+| Ternary QAT, fp32 latent + fp32 Adam | 16 | ~390M |
+| Ternary QAT, all-fp32 + materialised copy | 18 | ~350M |
+
+Ternary QAT still **has no PEFT escape hatch** — full fine-tuning only. But the
+headline correction is that **the ternary ceiling is a recipe decision, not a
+hardware limit**: it spans 350M → 760M depending on latent-weight precision,
+optimizer bit-width, and whether the materialised quantized tensor is fused per
+layer. The earlier "≈350–560M" was the all-fp32 end of that range. Route B at
+360M fits comfortably under *every* configuration; going above ~390M requires
+8-bit Adam, which is the single highest-leverage choice in the 1c recipe.
+
+Confidence: the activation term is measured; the per-parameter costs are
+computed from a LoRA run, which exercises optimizer state for only 2.4% of the
+model. **Design-time budget, not an empirical result** — a direct full-FT
+measurement is queued (LAB-NOTES open item 4).
+
+Other limits, unchanged:
+
 - Pretraining a ~100–135M model from scratch on a few billion tokens: feasible
   (order 50–100 unattended GPU-h per model) — **Route A, only if escalated**.
-- Evaluation: lm-evaluation-harness ≤2B bf16.
+- Evaluation: lm-evaluation-harness ≤2B bf16. Note generative tasks are the
+  expensive ones (IFEval ≈ 1h50m per 360M model); prefer likelihood probes.
 
 If an approved experiment needs more than this, rent an hourly cloud GPU for
 that experiment. No hardware purchases.
 
-Thermals: power-cap ~15% (`nvidia-smi -pl`), elevate chassis, headless. The
-resulting ~15–30% throughput penalty is folded into every card's GPU-h estimate.
+Thermals: **`nvidia-smi -pl` is unsupported on this vBIOS** — the clock cap
+(`-lgc`, currently 1200 MHz) is the only throttle available. Elevate chassis,
+headless. Measured derate is **~1.9× slower than cold** once heat-soaked
+(10+ min to steady state), and that factor — not the old ~15–30% estimate — is
+what every card's GPU-h estimate must use.
 
 ## 5. Phase 0 — bring-up (~week 1)
 
