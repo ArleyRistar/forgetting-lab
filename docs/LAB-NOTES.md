@@ -160,13 +160,13 @@ the boost → overheat → hard-throttle oscillation. Worth an A/B (e.g. 1000 vs
 
 ### Open at phase-0 close
 
-1. Before/after eval table — evals still running at handoff; collect from
-   `/tmp/eval-base.log` and `/tmp/eval-smoke.log` on the lab box (marker file
-   `/tmp/eval-done` appears when both finish) and append here.
+Raised here at close; **current status is tracked in the single list at the
+bottom of this file** — do not read this list as live.
+
+1. Before/after eval table — collect once the evals finish.
 2. Clock-cap A/B (1000 vs 1200 MHz over ~50 steps each) to test whether a lower
    cap raises *average* throughput by avoiding boost→throttle oscillation.
-3. ~~Re-derive the spec §4 VRAM envelope~~ — **done 2026-08-07**, see below.
-   Outcome was not what the open item assumed; §4 updated.
+3. Re-derive the spec §4 VRAM envelope from the measured 1.86 GiB.
 
 ## 2026-08-07 — VRAM envelope re-derivation (open item 3)
 
@@ -364,9 +364,29 @@ be run retrospectively — the SE column above is the conservative unpaired
 approximation. Add `--log_samples` to `scripts/eval.sh` before phase 1; paired
 testing on identical items is substantially more sensitive and costs only disk.
 
-### Still open
+## Open items — the live list
 
-5. Confirm whether the unmerged-adapter penalty also applies to batched
-   loglikelihood tasks, and if so add adapter-merging to the eval wrapper.
-6. Add `--log_samples` to the eval wrapper so paired significance tests are
-   possible.
+Closed:
+
+- ~~1. Before/after eval table~~ — done 2026-08-08. No benchmark metric moved
+  beyond ~1.1 SE; the loss probes did. See the eval section above.
+- ~~3. Re-derive the §4 VRAM envelope~~ — done 2026-08-07. Outcome inverted the
+  open item's assumption: the ternary ceiling is recipe-dependent, not
+  card-limited.
+- ~~4. Measure full-FT memory directly~~ — done 2026-08-08. Computed table
+  validated within ~10%.
+
+Open:
+
+2. **Clock-cap A/B** (1000 vs 1200 MHz over ~50 steps each) — does a lower cap
+   raise *average* throughput by avoiding boost→throttle oscillation?
+   **Needs a design card before compute is spent (spec §3).**
+5. **Does the unmerged-adapter 1.89× penalty also hit batched loglikelihood
+   tasks?** Likely much smaller (compute-bound, not decode-bound). If it does,
+   add adapter-merging to the eval wrapper.
+6. **Add `--log_samples` to `scripts/eval.sh`** so paired significance tests are
+   possible. Cheap, and phase 1 needs it — the phase-0 eval could not be tested
+   properly for want of it.
+7. **Measure the ternary QAT rows directly.** Everything measured so far is
+   float training; the materialised-quantized-tensor term is still computed.
+   Naturally folds into the 1c recipe shakedown at 135M.
