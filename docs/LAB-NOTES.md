@@ -250,6 +250,46 @@ SmolLM2-360M (no LoRA) reading `torch.cuda.max_memory_allocated`, under both
 the 8 vs 16 vs 6 B/param terms. Not run yet — the GPU was busy with the phase-0
 evals. **Queued as open item 4.**
 
+### Measured 2026-08-08 (closes open item 4)
+
+`scripts/mem_probe.py`, 20-step full fine-tune, same batch 4 × seq 1024 and
+gradient checkpointing as the LoRA run. Measured bytes/param is
+`(peak_allocated − 892 MiB activations) / 361.8M`:
+
+| configuration | peak alloc | peak reserved | measured B/param | predicted | ceiling (was) |
+| --- | --- | --- | --- | --- | --- |
+| bf16 + `adamw_torch` | 3.45 GiB | 3.90 GiB | **7.66** | 8 | 813M (778M) |
+| bf16 + `adamw_bnb_8bit` | 3.02 GiB | 3.26 GiB | **6.37** | 6 | 978M (1038M) |
+| fp32 master + `adamw_torch` | 6.84 GiB | 7.41 GiB | **17.71** | 16 | 352M (389M) |
+
+**The computed table holds — every configuration within ~10% of prediction**,
+and the two that matter for recipe choice bracket the ternary range as derived.
+Ceilings revised above; the 350M → 760M ternary span and the "recipe decision,
+not hardware limit" conclusion are unchanged.
+
+Two things the measurement adds that the arithmetic did not:
+
+1. **fp32 master weights cost ~17.7 B/param, not 16.** The extra ~1.7 is
+   autocast's transient bf16 weight cache (~2 B/param). Any recipe holding fp32
+   latent weights should budget 18, not 16.
+2. **That configuration came within 0.09 GiB of OOM at 360M** — peak *reserved*
+   was 7.41 GiB against 7.5 GiB usable. Not "roughly the ceiling": it *is* the
+   ceiling, with no room for a longer sequence, a larger batch, or an eval pass
+   sharing the device. Treat fp32-latent QAT above ~350M as out of reach on this
+   card rather than merely tight.
+
+Still computed rather than measured: the **ternary** rows specifically. The
+probe exercises float full fine-tuning, so it validates the per-parameter
+accounting and the optimizer/gradient terms, but not the materialised quantized
+tensor a QAT recipe adds on top — which is why the QAT rows sit above their
+float equivalents.
+
+Method note: the first probe run returned `bytes_per_param: 0.0` because the
+callback was constructed but never passed to `SFTTrainer(callbacks=[...])`. The
+explicit `warning` field added before the run caught it immediately instead of
+letting a plausible-looking zero into these notes. Worth keeping that habit — a
+measurement harness needs a way to say "I did not actually measure this".
+
 ## 2026-08-07 — an unmerged LoRA adapter doubles generative eval cost
 
 Noticed while the phase-0 evals ran. Identical task (IFEval, 541 prompts),
@@ -278,8 +318,55 @@ Not yet measured: whether the same 1.89× applies to loglikelihood tasks
 decode-bound, so the penalty is likely much smaller — worth confirming before
 generalising this to all evaluation.
 
+## 2026-08-08 — phase-0 before/after eval (task 5, closes open item 1)
+
+SmolLM2-360M base vs the same model with the 400-step LoRA SFT adapter.
+`lm_eval` 0-shot, `--batch_size auto`. Base run 1 h 46 m, adapter run 3 h 22 m
+(see the unmerged-adapter note above for why the second is slower).
+
+| task / metric | base | +LoRA | Δ | Δ in SE |
+| --- | --- | --- | --- | --- |
+| arc_easy acc | 0.7029 | 0.7130 | +0.0101 | 0.8 |
+| arc_easy acc_norm | 0.6814 | 0.6662 | −0.0152 | 1.1 |
+| hellaswag acc | 0.4317 | 0.4361 | +0.0044 | 0.6 |
+| hellaswag acc_norm | 0.5630 | 0.5686 | +0.0056 | 0.8 |
+| ifeval inst_level_loose | 0.2830 | 0.2926 | +0.0096 | n/a |
+| ifeval inst_level_strict | 0.2734 | 0.2830 | +0.0096 | n/a |
+| ifeval prompt_level_loose | 0.1553 | 0.1516 | −0.0037 | 0.2 |
+| ifeval prompt_level_strict | 0.1442 | 0.1479 | +0.0037 | 0.2 |
+
+("Δ in SE" uses the naive independent-difference standard error,
+`sqrt(se_base² + se_tuned²)`. The runs are paired on identical items, so the
+true paired SE is smaller — but see the caveat below.)
+
+**The honest read: nothing here moved.** Every delta sits at or under ~1.1
+standard errors, including the one negative (`arc_easy acc_norm`). The
+instruction-following metrics move in the direction you would hope for after
+SFT on `smol-smoltalk` — inst-level +0.96pp on both loose and strict — but not
+by enough to distinguish from noise.
+
+**Yet the fine-tune plainly worked**: held-out eval loss 1.362 → 1.187 and
+token accuracy 66.1% → 69.0% over the same 400 steps. So the loss-based probes
+resolved a change that four benchmark accuracies could not.
+
+**This is the phase-0 result that matters most**, because it is direct evidence
+for a methodology decision the spec had already made on theoretical grounds
+(§6: "likelihood-based probes remain primary — they stay sensitive where
+accuracies floor or saturate"). At this model scale, with this size of
+intervention, benchmark accuracy is simply not a usable instrument. A forgetting
+experiment that reported only accuracies would have measured nothing at all.
+Phase 1 should treat accuracy metrics as secondary reporting, not as the
+signal being tracked.
+
+**Caveat, and a phase-1 fix:** the runs were launched without `--log_samples`,
+so there are no per-item outputs and a proper paired significance test cannot
+be run retrospectively — the SE column above is the conservative unpaired
+approximation. Add `--log_samples` to `scripts/eval.sh` before phase 1; paired
+testing on identical items is substantially more sensitive and costs only disk.
+
 ### Still open
 
-4. Measure full-FT memory directly (above) to validate the §4 table.
 5. Confirm whether the unmerged-adapter penalty also applies to batched
    loglikelihood tasks, and if so add adapter-merging to the eval wrapper.
+6. Add `--log_samples` to the eval wrapper so paired significance tests are
+   possible.

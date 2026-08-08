@@ -95,10 +95,15 @@ layer. The earlier "≈350–560M" was the all-fp32 end of that range. Route B a
 360M fits comfortably under *every* configuration; going above ~390M requires
 8-bit Adam, which is the single highest-leverage choice in the 1c recipe.
 
-Confidence: the activation term is measured; the per-parameter costs are
-computed from a LoRA run, which exercises optimizer state for only 2.4% of the
-model. **Design-time budget, not an empirical result** — a direct full-FT
-measurement is queued (LAB-NOTES open item 4).
+Confidence: **validated 2026-08-08** by direct full-fine-tune measurement
+(`scripts/mem_probe.py`). All three float configurations landed within ~10% of
+the computed figures — bf16+AdamW 7.66 B/param (predicted 8), bf16+8-bit Adam
+6.37 (predicted 6), fp32 master 17.71 (predicted 16). Two corrections from the
+measurement: **budget 18 B/param, not 16, for fp32 latent weights** (autocast
+keeps a transient bf16 weight cache), and that configuration peaked 0.09 GiB
+below OOM at 360M — so fp32-latent QAT above ~350M is out of reach here, not
+merely tight. The **ternary** rows remain computed: the probe covers float
+training, not the materialised quantized tensor QAT adds on top.
 
 Other limits, unchanged:
 

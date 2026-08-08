@@ -82,6 +82,7 @@ def main() -> None:
             model_init_kwargs={"dtype": args.dtype},
         ),
         train_dataset=data["train"],
+        callbacks=[probe],
         # no peft_config: this is deliberately a full fine-tune
     )
     trainer.train()
