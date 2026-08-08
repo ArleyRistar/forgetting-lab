@@ -1,6 +1,6 @@
 # Phase 1a — Sequential Fine-Tuning Harness Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build the instrument the §1 question is asked with — a sequential
 fine-tuning rig (base → task A → task B → …) that measures forgetting with
@@ -276,7 +276,7 @@ primary output is a **loss matrix**, not an accuracy table.
 - Produces: `probe_all(model, tokenizer, tasks, cfg) -> dict` — per-task mean
   held-out NLL and token accuracy, plus n_tokens and a `warning` field.
 
-- [ ] **Step 1: Write the probe**
+- [x] **Step 1: Write the probe**
 
 Forward-only, no generation, `torch.no_grad()`, batched, bf16 autocast. For
 each task's held-out split: mean per-token NLL over **answer tokens only**
@@ -297,21 +297,21 @@ memory probe returned a plausible-looking `0.0` because a callback was never
 registered, and the warning field is what caught it. A probe that can't say
 "I did not measure this" will eventually put a fabricated number in LAB-NOTES.
 
-- [ ] **Step 2: Probe every task at every boundary**
+- [x] **Step 2: Probe every task at every boundary**
 
 After stage *k*, probe **all N tasks**, not only those trained so far. The
 resulting N×N matrix yields forgetting, backward transfer and forward transfer
 without any further runs; probing only seen tasks throws away the forward-transfer
 half for no saving worth having.
 
-- [ ] **Step 3: Merge adapters before any generative eval**
+- [x] **Step 3: Merge adapters before any generative eval**
 
 If a generative eval is ever added at a boundary, it operates on a
 `merge_and_unload()` copy. Measured: an unmerged adapter costs **1.89×** on
 generative decode. Assert this in code, not in a comment — the harness should
 refuse to run a generative eval on a live PEFT model.
 
-- [ ] **Step 4: Measure the probe's real cost, and write it down**
+- [x] **Step 4: Measure the probe's real cost, and write it down**
 
 **Computed estimate, to be replaced by measurement:** 8 tasks × 200 held-out
 sequences at seq 1024, forward-only, is order **4 min per boundary** and
