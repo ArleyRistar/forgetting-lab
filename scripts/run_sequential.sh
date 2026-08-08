@@ -16,13 +16,20 @@ MAX_RETRIES=${MAX_RETRIES:-3}
 LOG_DIR="$RUN_DIR/logs"
 mkdir -p "$LOG_DIR"
 
+# Stamp logs per *invocation*, not just per attempt. `attempt` resets to 0 every
+# time the supervisor starts, so plain attempt-N.log meant a restart silently
+# overwrote the log of the crash that caused it — losing the one file you most
+# want in a post-mortem. Found during the 2026-08-08 shakedown resume test.
+STAMP=$(date +%Y%m%d-%H%M%S)
+
 attempt=0
 rc=1
 while [ "$attempt" -le "$MAX_RETRIES" ]; do
-  log="$LOG_DIR/attempt-$attempt.log"
+  log="$LOG_DIR/$STAMP-attempt-$attempt.log"
   echo "== attempt $attempt/$MAX_RETRIES at $(date -Is) -> $log =="
   uv run python -m flab.sequential --config "$CONFIG" --run-dir "$RUN_DIR" > "$log" 2>&1
   rc=$?
+  ln -sfn "$(basename "$log")" "$LOG_DIR/latest.log"
 
   if [ "$rc" -eq 0 ]; then
     echo "== finished cleanly on attempt $attempt at $(date -Is) =="
@@ -53,8 +60,9 @@ done
 
 # The marker means *finished*, not *worked* - hence recording rc in it rather
 # than only writing it on success. A watcher must be able to tell the two apart
-# without parsing logs.
-printf 'rc=%s\nattempts=%s\nfinished=%s\n' "$rc" "$attempt" "$(date -Is)" \
-  > "$RUN_DIR/SUPERVISOR-DONE"
+# without parsing logs. Appended, not overwritten, so a restart's outcome does
+# not erase the record of the crash before it.
+printf 'rc=%s attempts=%s finished=%s log=%s\n' \
+  "$rc" "$attempt" "$(date -Is)" "$STAMP" >> "$RUN_DIR/SUPERVISOR-DONE"
 echo "== supervisor done rc=$rc after $((attempt + 1)) attempt(s) =="
 exit "$rc"

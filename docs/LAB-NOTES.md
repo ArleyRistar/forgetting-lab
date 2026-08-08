@@ -648,6 +648,134 @@ above the 13% the character histogram predicted — code tokenizes at fewer
 characters per token than prose. Answers are never truncated; this is prompt
 context only.
 
+## 2026-08-09 — phase-1a shakedown: the instrument reads (closes task 6)
+
+3 stages x 200 LoRA steps, SmolLM2-360M, seed 0, FOMC -> Py150 -> ScienceQA,
+1200 MHz cap. `configs/dev-3stage.yaml` at commit `408ff61`. Wall clock ~37 min
+including a deliberate mid-run kill; **well under the 2-3 GPU-h budgeted**.
+Supervisor exited `rc=0` on attempt 0 both times.
+
+### The loss matrix — held-out answer-token NLL
+
+| boundary | FOMC | Py150 | ScienceQA |
+| --- | --- | --- | --- |
+| baseline | 5.1510 | 1.6355 | 1.6353 |
+| after FOMC | **1.0619** | 1.9303 | 1.7455 |
+| after Py150 | 1.4537 | **0.8636** | 1.8220 |
+| after ScienceQA | 1.7557 | 0.9690 | **0.7749** |
+
+Bold is each task at its best, i.e. immediately after being trained. **I
+expected little or no forgetting from three short LoRA stages and was wrong** —
+the structure is textbook and unambiguous.
+
+**Forgetting.** Each task gives ground back after training moves on:
+
+| task | peak | final | forgot | as % of its own gain |
+| --- | --- | --- | --- | --- |
+| FOMC (trained 2 stages before the end) | 1.0619 | 1.7557 | **+0.6938** | 17.0% |
+| Py150 (trained 1 stage before the end) | 0.8636 | 0.9690 | **+0.1054** | 13.7% |
+
+The task trained longer ago forgot more — 6.6x more in absolute NLL. But note
+the two normalisations disagree in strength: as a fraction of each task's own
+gain it is 17.0% vs 13.7%, a far milder gradient, because FOMC's dynamic range
+(baseline 5.15) dwarfs Py150's (1.64). **Two points do not establish a curve**,
+and which normalisation is right is a real question for phase 2, not a detail.
+Report both or the effect size is whatever the author chose.
+
+**Negative forward transfer.** ScienceQA degrades monotonically while never
+being a training target — 1.6353 -> 1.7455 -> 1.8220, i.e. +0.11 then +0.19 —
+before dropping to 0.7749 when finally trained. Training on *anything* made an
+untouched task worse. This is only visible because the harness probes every
+task at every boundary; probing only trained tasks would have missed it, and it
+is the cheapest half of the matrix to collect.
+
+### Accuracy and NLL disagree — which is the whole argument for the instrument
+
+| boundary | FOMC | Py150 | ScienceQA |
+| --- | --- | --- | --- |
+| baseline | 0.000 | 0.691 | 0.620 |
+| after FOMC | 0.460 | 0.675 | **0.621** |
+| after Py150 | 0.230 | 0.804 | 0.606 |
+| after ScienceQA | 0.290 | 0.781 | 0.809 |
+
+After the FOMC stage, **ScienceQA's NLL worsened by +0.1101 while its token
+accuracy moved 0.620 -> 0.621 — nothing.** The model got measurably worse at
+ScienceQA without changing which token it ranks first.
+
+This is phase 0's conclusion reproduced inside a single run, and on a mechanism
+rather than a statistic. Phase 0 showed accuracy was too *noisy* to resolve a
+change. This shows something stronger: accuracy is the wrong **observable** —
+the degradation lives in the probability mass, and argmax discards exactly that.
+An accuracy-only harness would have reported "no effect" for a real one.
+
+FOMC's accuracy is also non-monotonic (0.460 -> 0.230 -> 0.290) while its NLL
+moves monotonically (1.0619 -> 1.4537 -> 1.7557). A monotonic underlying change
+read through argmax comes back non-monotonic.
+
+### FOMC's -4.09 is mostly format, not finance
+
+Accuracy 0.000 -> 0.460 on a 3-way A/B/C task. The base model never emits a
+bare answer letter at all, so most of that enormous NLL drop is learning the
+*output shape*. Do not report it as a gain in task competence. (Note 0.460 is
+argmax over the full 49k vocab, not a 3-way choice, so it is not directly
+comparable to a 1/3 chance rate either.)
+
+### Crash-resume verified on the real thing
+
+Killed the tmux session at **step 53/200 of Py150**, with `checkpoint-50` on
+disk, then restarted the supervisor. Both layers worked:
+
+- **Outer (run state):** re-entered at stage 1. `probe-baseline.json` and
+  `probe-after-0.json` had **identical mtimes and sha256** afterwards, and
+  `stage-0-FOMC` was untouched — so no retraining and no recomputed boundary.
+- **Inner (TRL checkpoint):** Py150 resumed at global_step 50 rather than 0.
+
+**How that was verified matters.** transformers 5.x prints no "Continuing
+training from checkpoint" banner, so grepping for it finds nothing and looks
+exactly like a broken resume. The evidence is the step/time trace:
+
+```
+step  elapsed  s/step
+   0        0     -
+  51        4    0.08   <- data-skip to the resume point
+  53       12    4.00   <- real training
+```
+
+A jump of 51 steps in 4 seconds is the fast-forward; 0.08 s/step is not
+training. **Check the discontinuity, not the banner.**
+
+### A flaw the resume test found, now fixed
+
+The supervisor named logs `attempt-$attempt.log` with `attempt` resetting to 0
+on every invocation — so **the restart silently overwrote the log of the crash
+that caused it**, which is the one file a post-mortem most wants. Logs are now
+stamped per invocation (`$STAMP-attempt-N.log`, plus a `latest.log` symlink) and
+`SUPERVISOR-DONE` is appended rather than overwritten. Verified by running the
+smoke config twice and getting two logs and two marker lines.
+
+This is what a shakedown is for: the bug was in the recovery path, which is
+exactly the code that only ever runs when something has already gone wrong.
+
+### Cost
+
+- Probing: **84.6 s for all 4 boundaries** (~21 s each, vs 12.7 s standalone —
+  the difference is the LoRA adapter in the forward path). Against 1 h 50 m for
+  a single IFEval, the full forgetting instrument is free.
+- Step time varies ~4x by task: FOMC **1.23 s/step**, Py150 ~4.5-5.0,
+  ScienceQA ~4.1. TRL pads to the batch's longest sequence, not to `max_length`,
+  so short-answer tasks train much faster. **GPU-hour estimates must be
+  per-task, not per-step-count** — the estimate I gave before launch was ~3x too
+  pessimistic because it assumed the smoke test's full-length sequences.
+- No probe warnings at any boundary: every cell measured what it claims.
+
+### Caveat
+
+**One seed.** The pattern is clean and the mechanisms are individually
+plausible, but nothing here has an error bar, and the recency gradient rests on
+two points. Phase 2 requires >=3 seeds on anything result-bearing (spec §7) and
+that is not a formality — the normalisation ambiguity above could easily be
+larger than the effect.
+
 ## Open items — the live list
 
 Closed:
@@ -676,3 +804,6 @@ Open:
 8. **Reconcile the two derate numbers** — §4 budgets 1.9x, the clock-cap A/B
    measured 1.26x over 11 min of full fine-tuning at 87 C. Different workloads;
    until reconciled, keep budgeting at 1.9x (the conservative one).
+9. **Which forgetting normalisation?** Absolute NLL delta and percent-of-own-gain
+   disagreed about the recency gradient's strength in the shakedown (6.6x vs
+   1.2x). Decide before phase 2 reports an effect size, and report both.
