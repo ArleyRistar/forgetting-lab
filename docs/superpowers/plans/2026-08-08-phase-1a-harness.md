@@ -340,7 +340,7 @@ git commit -m "feat: held-out NLL probe; measured boundary-eval cost"
 - Consumes: everything above.
 - Produces: `uv run python -m flab.sequential --config configs/dev-3stage.yaml`
 
-- [ ] **Step 1: The stage loop**
+- [x] **Step 1: The stage loop**
 
 ```
 load config -> open/create run dir -> load or init run state
@@ -357,19 +357,19 @@ twin starts weaker than its float twin, so forgetting must be measured relative
 to **each model's own post-conversion baseline**, never as a cross-model
 absolute. The harness should make the right comparison the easy one.
 
-- [ ] **Step 2: Mid-stage checkpoints, never speculatively evaluated**
+- [x] **Step 2: Mid-stage checkpoints, never speculatively evaluated**
 
 `save_steps` writes weights to disk during a stage; the probe fires only at
 stage boundaries (spec §6 1a). Mid-stage checkpoints are crash insurance, not
 data points.
 
-- [ ] **Step 3: LoRA and full modes through one code path**
+- [x] **Step 3: LoRA and full modes through one code path**
 
 `mode: lora` attaches a `LoraConfig`; `mode: full` passes no `peft_config` and
 uses `optim` from the config. Both must reach the same probe code, or 1c will
 discover a fork in the instrument at the worst possible moment.
 
-- [ ] **Step 4: Test on CPU with a tiny model**
+- [x] **Step 4: Test on CPU with a tiny model**
 
 `tests/test_sequential.py`: two stages, 2 steps each, a tiny HF test model, on
 CPU. Assert stage ordering, that state advances, that a mid-run kill resumes at
@@ -392,25 +392,25 @@ Spec §6 1a asks for this "from day one": at 5–10 h/week of human attention, a
 **Files:**
 - Create: `scripts/run_sequential.sh`
 
-- [ ] **Step 1: Retry loop**
+- [x] **Step 1: Retry loop**
 
 Relaunch the harness on non-zero exit, up to `MAX_RETRIES` (default 3), with the
 resume path taken automatically because run state is on disk. Log each attempt
 with a timestamp.
 
-- [ ] **Step 2: Distinguish retryable from fatal**
+- [x] **Step 2: Distinguish retryable from fatal**
 
 An OOM is **not** retryable at the same batch size — retrying it three times
 just wastes an hour and heat-soaks the chassis for whatever runs next. Grep the
 failure log: on OOM, stop and report loudly. On anything else, retry.
 
-- [ ] **Step 3: Completion marker**
+- [x] **Step 3: Completion marker**
 
 Write the marker at the end of the chain, and follow the existing convention:
 a marker means *finished*, not *worked*. Include the last exit code in it so a
 watcher can tell the difference without parsing logs.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add scripts/run_sequential.sh
