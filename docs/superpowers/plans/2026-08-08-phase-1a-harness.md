@@ -421,7 +421,7 @@ git commit -m "feat: supervising run script with bounded auto-retry"
 
 ### Task 6: Shakedown run + the deliverable
 
-- [ ] **Step 1: Three-stage dev run**
+- [x] **Step 1: Three-stage dev run**
 
 `tmux new -As seq` → `scripts/run_sequential.sh configs/dev-3stage.yaml`.
 3 stages × 200 steps, LoRA, seed 0.
@@ -434,13 +434,13 @@ a result-bearing run — the same category as the thermal, memory and clock-cap
 probes. The gate still stands for everything downstream of it: the first run
 that produces a *number we would report* needs a card.
 
-- [ ] **Step 2: Prove the resume path on the real thing**
+- [x] **Step 2: Prove the resume path on the real thing**
 
 Kill the tmux session mid-stage-2 and restart it. Assert it resumes inside
 stage 2 rather than restarting stage 0. A resume path that has only ever been
 tested on CPU with a toy model is not a resume path you can trust at 3 a.m.
 
-- [ ] **Step 3: Read the loss matrix**
+- [x] **Step 3: Read the loss matrix**
 
 Assemble the 4 probe files into the N×N matrix and plot it. **Expect little or
 no forgetting** — three short LoRA stages on a 360M model is a small
@@ -448,7 +448,7 @@ intervention, and phase 0 showed how insensitive this scale is. The deliverable
 is that the instrument *reads*, not that it finds something. A clean null here
 is a working harness, not a failed experiment.
 
-- [ ] **Step 4: LAB-NOTES + commit**
+- [x] **Step 4: LAB-NOTES + commit**
 
 Record: measured probe cost vs the task-3 estimate, wall-clock per stage,
 peak reserved VRAM, whether resume worked on the real run, and the matrix.
