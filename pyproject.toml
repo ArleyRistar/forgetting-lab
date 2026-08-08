@@ -12,6 +12,7 @@ dependencies = [
     "accelerate>=1.2",
     "lm-eval[ifeval]>=0.4.8",
     "tensorboard>=2.18",
+    "bitsandbytes>=0.50.0",
 ]
 
 [dependency-groups]
