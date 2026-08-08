@@ -273,27 +273,42 @@ up with the same care as a pass.
 
 ---
 
-## Decisions needed from Arley
+## Decisions taken (Arley, 2026-08-09)
 
-1. **Which model to calibrate on?** Recommendation: **Llama 3.2 1B Instruct** —
-   one of their three, and a 1B model fits comfortably under LoRA at 2 B/param
-   (spec §4). That makes the comparison *numeric* rather than a trend analogy,
-   which is much stronger evidence. Then run SmolLM2-360M as a second arm to
-   confirm the trends survive down to the size phase 2 actually uses.
+- **Calibrate on Llama 3.2 1B Instruct** — one of the paper's own three models,
+  so the comparison is numeric rather than a trend analogy. SmolLM2-360M runs as
+  a second arm to confirm the trends survive to the size phase 2 uses (and
+  because a *base* model starting at 0.000 accuracy is not comparable to their
+  instruct models in any meaningful way — see the shakedown's FOMC column).
+- **No design card**, as with the 1a shakedown. Estimated ~6–10 derated GPU-h
+  for both orders × 3 seeds × 2 models, well inside the 40 GPU-h cap.
 
-   The alternative — calibrate only on SmolLM2-360M — is cheaper but weaker, and
-   has a specific hazard: **their models are instruct-tuned and ours is a base
-   model.** The shakedown showed FOMC accuracy starting at exactly 0.000 because
-   a base model never emits a bare answer letter. Accuracy-based CL metrics
-   computed from a 0.000 starting point are not comparable to theirs in any
-   meaningful way. I would not skip the 1B arm.
+### Weights: gated upstream, resolved by a verified mirror
 
-2. **Design card?** These are the first runs producing numbers we would report,
-   so by the rule I wrote into the 1a plan, **this needs a card** — unlike the
-   shakedown. Estimated **~6–10 derated GPU-h** for both orders × 3 seeds × 2
-   models, well inside the 40 GPU-h cap. Flagging rather than assuming.
+`meta-llama/Llama-3.2-1B-Instruct` is `gated: manual` and this box's token is
+not approved — a hard 403, not a slow path. Rather than block on manual
+approval, use **`unsloth/Llama-3.2-1B-Instruct`**, whose `model.safetensors`
+sha256 is **bit-identical** to Meta's published digest:
 
-3. **Still open from 1a, now more pressing:** the forgetting normalisation
-   question (open item 9). Task 4 computes BWT, which is an *absolute*
-   difference — so adopting the paper's metric implicitly answers it one way.
-   Worth deciding deliberately rather than by inheritance.
+```
+1ff795ff6a07e6a68085d206fb84417da2f083f68391c2843cd2b8ac6df8538f
+```
+
+Verified against the official repo's own API metadata *and* recomputed from the
+downloaded file. Pin that digest in the config and check it on load — a mirror
+is only acceptable while it stays byte-identical, and silently is exactly how
+that would stop being true.
+
+Measured on the box: 1.236B params, 16 layers, hidden 2048, **vocab 128256**;
+LoRA `all-linear` at r=8 gives 5.64M trainable (0.456%); a forward pass at their
+batch 2 × seq 512 reserves **2844 MiB of 7844**. Comfortable.
+
+Note the vocab is **2.6× SmolLM2's** (128256 vs 49152), and probe activation
+memory is logit-dominated (LAB-NOTES 2026-08-07) — so probe batch size may need
+lowering for this model. It is in the config hash, so that is a deliberate act.
+
+## Still open
+
+- **The forgetting normalisation question** (open item 9). Task 4 computes BWT,
+  an *absolute* difference — so adopting the paper's metric answers it one way
+  by inheritance. Worth deciding deliberately instead.

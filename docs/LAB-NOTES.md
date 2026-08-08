@@ -840,6 +840,43 @@ at no extra VRAM.
 
 Plan: `docs/superpowers/plans/2026-08-09-phase-1b-calibration.md`.
 
+## 2026-08-09 — Llama 3.2 1B is gated; a mirror with an identical digest
+
+Arley chose Llama 3.2 1B Instruct for the 1b calibration (2026-08-09), and no
+design card, as with the 1a shakedown.
+
+**`meta-llama/Llama-3.2-1B-Instruct` is `gated: manual`** and this box's HF
+token is not approved: a hard 403 on the config, not a slow path. Manual
+approval could take days and is not something the box can do for itself.
+
+Resolved without waiting: **`unsloth/Llama-3.2-1B-Instruct`** is ungated and its
+`model.safetensors` sha256 is **bit-identical** to Meta's published digest —
+
+```
+1ff795ff6a07e6a68085d206fb84417da2f083f68391c2843cd2b8ac6df8538f
+```
+
+— confirmed both from the official (gated) repo's public API metadata and by
+recomputing the hash from the downloaded file. This is *stronger* provenance
+than the usual "a mirror, probably fine": there is a cryptographic link to the
+official release. Pin the digest and verify on load, because a mirror silently
+ceasing to be byte-identical is the failure mode that matters.
+
+Measured on the box:
+
+| | |
+| --- | --- |
+| params | 1.236B (16 layers, hidden 2048) |
+| vocab | **128256** — 2.6× SmolLM2-360M's 49152 |
+| LoRA `all-linear` r=8 | 5.64M trainable, 0.456% |
+| fwd, batch 2 × seq 512 | **2844 MiB reserved** of 7844 |
+
+The vocab jump is the thing to watch. Probe activation memory is
+logit-dominated and scales with `vocab × batch × seq`, so the probe batch size
+that was comfortable at 49152 may not be at 128256 — and `probe.batch_size` is
+in the config hash precisely because changing it changes the numbers. Expect to
+set it deliberately for this model rather than inherit 4.
+
 ## Open items — the live list
 
 Closed:
