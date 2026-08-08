@@ -16,6 +16,7 @@ down rather than discovers at runtime (see LAB-NOTES 2026-08-08):
     trust.
 """
 from pathlib import Path
+import hashlib
 import json
 
 from datasets import Dataset, DatasetDict
@@ -76,6 +77,34 @@ def _truncate_prompt(prompt: str, answer: str, tokenizer, max_length: int) -> tu
         # this example; surface it rather than emitting a silent empty prompt.
         return "", True
     return tokenizer.decode(ids[-budget:]), True
+
+
+def prefix_of(prompt: str) -> str:
+    """Everything before the answer, so a probe can find the boundary exactly.
+
+    String-splitting a formatted example back apart would break the moment an
+    answer contained the assistant tag. Building the two halves separately
+    keeps the boundary exact.
+    """
+    return f"{TAGS['user']}\n{prompt}\n{TAGS['assistant']}\n"
+
+
+def load_probe_examples(
+    name: str, n_eval: int = 200, seed: int = 0, split: str = "eval"
+) -> tuple[list[dict], dict]:
+    """Held-out (prompt, answer) pairs for the NLL probe, plus honest counts.
+
+    Kept separate from `load_task` because the probe needs the halves apart
+    while training needs them joined. The selection is deterministic in `seed`,
+    which is the property that matters: every boundary in a run must probe the
+    *same* held-out examples, or the loss matrix is comparing different sets.
+    """
+    rows = _read(name, split)
+    order = sorted(range(len(rows)), key=lambda i: hashlib.sha256(f"{seed}:{i}".encode()).hexdigest())
+    take = order[: min(n_eval, len(rows))]
+    picked = [{"prompt": rows[i]["prompt"], "answer": rows[i]["answer"]} for i in take]
+    stats = {"requested": n_eval, "used": len(picked), "available": len(rows)}
+    return picked, stats
 
 
 def _read(task: str, split: str) -> list[dict]:

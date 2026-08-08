@@ -529,6 +529,77 @@ arm with a *negative* mean s/it. Nonsense that obvious is harmless; the danger
 is the same bug landing on numbers that merely look plausible. The parser now
 separates bars by their total and takes the one with the most entries.
 
+## 2026-08-08 — the boundary probe is ~7x cheaper than estimated (phase-1a task 3)
+
+`scripts/probe_cost.py` against base SmolLM2-360M, 3 dev tasks x 200 held-out
+examples, seq 1024, bf16, forward-only.
+
+**Estimated 4 min per boundary for 8 tasks. Measured 12.7 s for 3 tasks** —
+about 4.2 s/task, so ~34 s for all eight, not 4 minutes. The whole 4-boundary
+dev run spends **under a minute** on probing. One IFEval run costs 1 h 50 m.
+The instrument is effectively free, which is the phase-0 lesson paying off:
+the sensitive measurement is also the cheap one.
+
+The estimate is superseded, not "confirmed" — it was out by 7x and only ever
+existed to be replaced (hard rule 3).
+
+### Baseline — every later boundary is read against this
+
+| task | NLL | token acc | n_tokens | prompts truncated |
+| --- | --- | --- | --- | --- |
+| FOMC | 5.1510 | **0.000** | 200 | 0 / 200 |
+| Py150 | 1.6355 | 0.691 | 2799 | **50 / 200** |
+| ScienceQA | 1.6353 | 0.620 | 43720 | 0 / 200 |
+
+Two things to notice. **FOMC token accuracy is exactly zero** — the base model
+never emits the right letter, because it is a base model with no instruction
+format. NLL 5.15 against ln(49152) = 10.8 for uniform, so it is far from
+ignorant, just not answering in the expected shape. That is a large amount of
+headroom, which is good for the experiment.
+
+**Py150 truncates 25% of prompts (50/200), not the 13% the character histogram
+predicted.** Code tokenizes at fewer characters per token than prose, so a
+char-based estimate understates it. The answers are untouched — that is the
+invariant — but a quarter of Py150 prompts are seeing a left-truncated context.
+
+### The probe is deterministic, but NLL depends on batch size
+
+Two runs at batch 4 gave **bit-identical** NLL to six decimals. There is no
+run-to-run noise floor to subtract.
+
+But batch size changes the answer:
+
+| | FOMC | Py150 | ScienceQA | alloc | reserved | time |
+| --- | --- | --- | --- | --- | --- | --- |
+| batch 4 | 5.150951 | 1.635523 | 1.635345 | 2325 MiB | 5970 MiB | 12.7 s |
+| batch 2 | 5.144454 | 1.635955 | 1.635489 | 1548 MiB | 4954 MiB | 14.2 s |
+
+FOMC moves **0.0065** between the two. The cause is bf16 reduction order
+changing with padding width, and FOMC is the most exposed because it scores
+only 200 tokens total (one per example) where ScienceQA averages 43,720.
+
+**Consequence: `probe.batch_size` is part of the experiment and is now in the
+config hash.** Lowering it mid-run to fit a bigger model would manufacture an
+NLL shift of the same order as a real effect, and nothing downstream would show
+it. Changing it now correctly invalidates resume.
+
+### Fragmentation: reserved was 3.2x allocated until bucketing
+
+First measurement: **2321 MiB allocated but 7424 MiB reserved** — 97% of the
+card for a forward-only pass, and the log shows the allocator hitting an OOM
+and recovering. The 8-13% reserved/allocated gap in the §4 notes does not hold
+here.
+
+Cause: length-sorted batching gives nearly every batch a distinct width, and
+the caching allocator holds a block per distinct shape. Padding widths up to a
+multiple of 128 cut reserved to **5970 MiB** (-1454 MiB) with no change to the
+numbers. `probe_all` also calls `empty_cache()` on entry and exit, because in
+the harness the probe runs immediately after training with that allocation
+still cached.
+
+Worth generalising: **when reserved runs far above allocated, suspect shape
+diversity before suspecting a leak.**
+
 ## Open items — the live list
 
 Closed:

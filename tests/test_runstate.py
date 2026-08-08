@@ -55,6 +55,7 @@ def test_probe_all_dedupes_repeated_tasks():
     dict(stages=(StageConfig("FOMC", 0, 1e-4),)),           # zero steps
     dict(stages=(StageConfig("FOMC", 10, 0.0),)),           # zero LR
     dict(probe=ProbeConfig(n_eval=0)),
+    dict(probe=ProbeConfig(batch_size=0)),
     dict(probe=ProbeConfig(tasks=["NotATask"])),
 ])
 def test_invalid_configs_are_rejected(bad):
@@ -75,6 +76,8 @@ def test_hash_changes_when_the_experiment_changes():
     assert cfg(mode="full").content_hash != base
     assert cfg(optim="adamw_bnb_8bit").content_hash != base
     assert cfg(stages=(StageConfig("FOMC", 11, 1e-4),)).content_hash != base
+    # batch_size changes the numbers, so it must change the hash
+    assert cfg(probe=ProbeConfig(batch_size=2)).content_hash != base
 
 
 # -- state ---------------------------------------------------------------

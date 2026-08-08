@@ -39,6 +39,12 @@ class ProbeConfig:
     tasks: str | list[str] = "all"
     n_eval: int = 200
     max_length: int = 1024
+    # Part of the experiment, not a performance knob. The probe is bit-exact
+    # at a fixed batch size but NLL shifts with it (measured 2026-08-08: FOMC
+    # moves 0.0065 between batch 2 and 4, from bf16 reduction order changing
+    # with padding width). Changing it mid-run would manufacture a shift that
+    # reads as forgetting, so it lives in the hash.
+    batch_size: int = 4
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,8 @@ class RunConfig:
                 raise ValueError(f"{s.task}: learning_rate must be positive")
         if self.probe.n_eval <= 0:
             raise ValueError("probe.n_eval must be positive")
+        if self.probe.batch_size <= 0:
+            raise ValueError("probe.batch_size must be positive")
         for t in self.probe_tasks:
             if t not in trace.TASKS:
                 raise ValueError(f"unknown probe task {t!r}")

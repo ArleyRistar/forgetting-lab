@@ -26,3 +26,4 @@ probe:
   tasks: all        # every task in `stages` -> a 3x3 matrix over 4 boundaries
   n_eval: 200       # clamped per task to what exists, and the real count reported
   max_length: 1024
+  batch_size: 4     # hashed: NLL shifts with it, so it must not change mid-run
