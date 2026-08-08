@@ -88,13 +88,13 @@ already clamped and reported, so this needs discipline, not code.
 **Files:** modify `src/flab/trace.py`, `src/flab/runconfig.py`,
 `src/flab/sequential.py`; add `configs/calib-paper.yaml`; extend tests.
 
-- [ ] **Step 1: Make the TRACE variant a config field**
+- [x] **Step 1: Make the TRACE variant a config field**
 
 `trace.VARIANT` is pinned to `_5000`. Replication needs `_500`. Make it a
 parameter threaded from `RunConfig` (default `_5000`), and keep the guard that
 `_500`'s 20Minuten lacks `eval.json` — pin, never auto-discover.
 
-- [ ] **Step 2: LoRA hyperparameters into the config, `all-linear` supported**
+- [x] **Step 2: LoRA hyperparameters into the config, `all-linear` supported**
 
 `r`, `alpha`, `dropout`, `bias`, `target_modules` are currently constants in
 `sequential.py`. Move them to a `lora:` block. `target_modules: all-linear` must
@@ -102,20 +102,20 @@ map to peft's `"all-linear"`, which is not the same set as our 7 named modules �
 it includes the LM head's projections on some architectures, and that changes
 what is being adapted.
 
-- [ ] **Step 3: `epochs` as an alternative to `max_steps`**
+- [x] **Step 3: `epochs` as an alternative to `max_steps`**
 
 Stages take `max_steps`. The paper trains **1 epoch**. Accept either, reject
 both-or-neither at validation time, and record the resolved step count in run
 state so the two are comparable afterwards.
 
-- [ ] **Step 4: Confirm the optimizer really is reset per task**
+- [x] **Step 4: Confirm the optimizer really is reset per task**
 
 The paper resets AdamW per task. Our harness builds a fresh `SFTTrainer` per
 stage, which *should* mean a fresh optimizer — but "should" is not "does". Assert
 it: check optimizer state is empty at the first step of stage k>0. If it is not,
 the comparison is invalid in a way no output would reveal.
 
-- [ ] **Step 5: `configs/calib-paper.yaml` reproducing their protocol exactly**
+- [x] **Step 5: `configs/calib-paper.yaml` reproducing their protocol exactly**
 
 Every value from the table above. Commit it as the executable record of what we
 replicated.

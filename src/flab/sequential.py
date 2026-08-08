@@ -26,12 +26,6 @@ from flab import probes, trace
 from flab.runconfig import RunConfig
 from flab.runstate import RunState, DONE, RUNNING
 
-LORA_TARGETS = [
-    "q_proj", "k_proj", "v_proj", "o_proj",
-    "gate_proj", "up_proj", "down_proj",
-]
-
-
 def stage_dir(run_dir: Path, index: int, task: str) -> Path:
     return run_dir / f"stage-{index}-{task}"
 
@@ -39,9 +33,38 @@ def stage_dir(run_dir: Path, index: int, task: str) -> Path:
 # -- model plumbing ------------------------------------------------------
 
 
+def verify_model_digest(cfg: RunConfig) -> str | None:
+    """Check the downloaded weights against the digest pinned in the config.
+
+    Llama 3.2 1B is gated upstream and we train on a mirror whose weights are
+    byte-identical to Meta's release. "Byte-identical today" is not a property
+    that maintains itself, and a mirror that quietly diverges would produce a
+    calibration against unknown weights with nothing in the output to show it.
+    Raises rather than warns: a provenance failure is not a degraded run.
+    """
+    if not cfg.model_sha256:
+        return None
+    import hashlib
+
+    from huggingface_hub import try_to_load_from_cache
+
+    path = try_to_load_from_cache(cfg.model, "model.safetensors")
+    if not isinstance(path, str):
+        raise RuntimeError(f"cannot verify {cfg.model}: model.safetensors not in cache")
+    got = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    if got != cfg.model_sha256:
+        raise RuntimeError(
+            f"{cfg.model} weights do not match the pinned digest.\n"
+            f"  expected {cfg.model_sha256}\n  got      {got}\n"
+            "Refusing to train on unverified weights."
+        )
+    return got
+
+
 def _load_base(cfg: RunConfig):
     from transformers import AutoModelForCausalLM
 
+    verify_model_digest(cfg)
     # transformers 5.x renamed torch_dtype -> dtype (LAB-NOTES quirk 2)
     kwargs = {"dtype": "bfloat16"} if torch.cuda.is_available() else {}
     model = AutoModelForCausalLM.from_pretrained(cfg.model, **kwargs)
@@ -98,8 +121,14 @@ def _prepare_model(cfg: RunConfig, model, state: RunState):
             # fine-tuning trains the *same* adapter stage after stage. Starting
             # a fresh adapter per stage would be a different experiment.
             return PeftModel.from_pretrained(model, ckpt, is_trainable=True)
+        tm = cfg.lora.target_modules
         return get_peft_model(model, LoraConfig(
-            r=16, lora_alpha=32, lora_dropout=0.05, target_modules=LORA_TARGETS,
+            r=cfg.lora.r,
+            lora_alpha=cfg.lora.alpha,
+            lora_dropout=cfg.lora.dropout,
+            bias=cfg.lora.bias,
+            # peft takes the literal string "all-linear" or a list of names.
+            target_modules=tm if isinstance(tm, str) else list(tm),
         ))
 
     if ckpt:
@@ -117,29 +146,34 @@ def _train_stage(cfg: RunConfig, model, tokenizer, index: int, out: Path) -> int
 
     stage = cfg.stages[index]
     cuda = torch.cuda.is_available()
-    batch, accum = (4, 4) if cuda else (1, 1)
-    # Prepare only what the stage will actually consume. The example order is a
-    # deterministic hash of (seed, index), so the first N of a 5000-row pool and
-    # a pool of exactly N are the *same* N examples — this is a cost saving, not
-    # a change of experiment. If N exceeds the split, load_task clamps and the
-    # trainer cycles epochs as before.
+    batch, accum = (cfg.train.batch_size, cfg.train.grad_accum) if cuda else (1, 1)
+
+    # With max_steps, prepare only what the stage consumes: the example order is
+    # a deterministic hash of (seed, index), so the first N of a 5000-row pool
+    # and a pool of exactly N are the *same* N examples — a cost saving, not a
+    # change of experiment. With epochs, "the whole split" is the definition, so
+    # take all of it.
+    n_train = None if stage.epochs else stage.max_steps * batch * accum
     data = trace.load_task(
-        stage.task, n_train=stage.max_steps * batch * accum, n_eval=8, seed=cfg.seed,
-        tokenizer=tokenizer, max_length=cfg.probe.max_length,
+        stage.task, n_train=n_train, n_eval=8, seed=cfg.seed,
+        tokenizer=tokenizer, max_length=cfg.train.max_length,
+        variant=cfg.trace_variant,
     )
     resume = out.exists() and any(out.glob("checkpoint-*"))
+    steps = min(20, max(1, (stage.max_steps or 100) // 10))
 
     args = SFTConfig(
         output_dir=str(out),
-        max_steps=stage.max_steps,
+        max_steps=stage.max_steps if stage.max_steps else -1,
+        num_train_epochs=stage.epochs if stage.epochs else 3.0,
         per_device_train_batch_size=batch,
         gradient_accumulation_steps=accum,
         learning_rate=stage.learning_rate,
-        lr_scheduler_type="cosine",
-        warmup_steps=min(20, max(1, stage.max_steps // 10)),
+        lr_scheduler_type=cfg.train.lr_scheduler,
+        warmup_steps=cfg.train.warmup_steps if cfg.train.warmup_steps is not None else steps,
         bf16=cuda,
         gradient_checkpointing=cuda,
-        max_length=cfg.probe.max_length,
+        max_length=cfg.train.max_length,
         logging_steps=10,
         save_steps=50,          # mid-stage crash insurance...
         save_total_limit=2,
@@ -163,7 +197,7 @@ def _probe_to_disk(cfg: RunConfig, model, tokenizer, run_dir: Path, name: str) -
     result = probes.probe_all(
         model, tokenizer, cfg.probe_tasks,
         n_eval=cfg.probe.n_eval, max_length=cfg.probe.max_length,
-        batch_size=cfg.probe.batch_size, seed=cfg.seed,
+        batch_size=cfg.probe.batch_size, seed=cfg.seed, variant=cfg.trace_variant,
     )
     (run_dir / name).write_text(json.dumps(result, indent=2))
     return name

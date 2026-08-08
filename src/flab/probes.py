@@ -107,10 +107,11 @@ def probe_task(
     max_length: int = 1024,
     batch_size: int = 4,
     seed: int = 0,
+    variant: str = trace.VARIANT,
 ) -> TaskProbe:
     """Mean per-token NLL and token accuracy over one task's held-out answers."""
     t0 = time.perf_counter()
-    examples, stats = trace.load_probe_examples(task, n_eval=n_eval, seed=seed)
+    examples, stats = trace.load_probe_examples(task, n_eval=n_eval, seed=seed, variant=variant)
 
     encoded, n_trunc, n_dropped = [], 0, 0
     for ex in examples:
@@ -195,7 +196,8 @@ def probe_task(
 
 
 def probe_all(model, tokenizer, tasks: list[str], *, n_eval: int = 200,
-              max_length: int = 1024, batch_size: int = 4, seed: int = 0) -> dict:
+              max_length: int = 1024, batch_size: int = 4, seed: int = 0,
+              variant: str = trace.VARIANT) -> dict:
     """Probe every task, returning a dict ready to serialise to a boundary file.
 
     Every task is probed at every boundary, including tasks not yet trained on:
@@ -212,7 +214,7 @@ def probe_all(model, tokenizer, tasks: list[str], *, n_eval: int = 200,
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     results = {t: probe_task(model, tokenizer, t, n_eval=n_eval, max_length=max_length,
-                             batch_size=batch_size, seed=seed) for t in tasks}
+                             batch_size=batch_size, seed=seed, variant=variant) for t in tasks}
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     warnings = {t: r.warning for t, r in results.items() if r.warning}

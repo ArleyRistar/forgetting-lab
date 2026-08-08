@@ -26,6 +26,17 @@ from flab.data import TAGS
 ROOT = Path(__file__).resolve().parents[2] / "data" / "trace" / "TRACE-Benchmark"
 VARIANT = "LLM-CL-Benchmark_5000"
 
+# All four ship in the archive; the README mentions none of them. `_5000` is the
+# canonical training set and our default; `_500` is what arXiv 2606.27634 used,
+# so phase-1b replication needs it. `_500`'s 20Minuten still lacks eval.json —
+# the variant is chosen explicitly, never auto-discovered.
+VARIANTS = (
+    "LLM-CL-Benchmark_500",
+    "LLM-CL-Benchmark_1000",
+    "LLM-CL-Benchmark_5000",
+    "LLM-CL-Benchmark_Reasoning",
+)
+
 # The eight training tasks. Lima is the replay set, deliberately not here.
 TASKS = [
     "C-STANCE", "FOMC", "MeetingBank", "Py150",
@@ -53,9 +64,9 @@ def pretrim(prompt: str, max_length: int) -> str:
     return prompt[-cap:] if len(prompt) > cap else prompt
 
 
-def available() -> bool:
+def available(variant: str = VARIANT) -> bool:
     """True when the vendored archive is present, so tests can skip not fail."""
-    return (ROOT / VARIANT).is_dir()
+    return (ROOT / variant).is_dir()
 
 
 def format_example(prompt: str, answer: str) -> str:
@@ -114,7 +125,8 @@ def _order(n: int, seed: int) -> list[int]:
 
 
 def load_probe_examples(
-    name: str, n_eval: int = 200, seed: int = 0, split: str = "eval"
+    name: str, n_eval: int = 200, seed: int = 0, split: str = "eval",
+    variant: str = VARIANT,
 ) -> tuple[list[dict], dict]:
     """Held-out (prompt, answer) pairs for the NLL probe, plus honest counts.
 
@@ -123,15 +135,15 @@ def load_probe_examples(
     which is the property that matters: every boundary in a run must probe the
     *same* held-out examples, or the loss matrix is comparing different sets.
     """
-    rows = _read(name, split)
+    rows = _read(name, split, variant)
     take = _order(len(rows), seed)[: min(n_eval, len(rows))]
     picked = [{"prompt": rows[i]["prompt"], "answer": rows[i]["answer"]} for i in take]
     stats = {"requested": n_eval, "used": len(picked), "available": len(rows)}
     return picked, stats
 
 
-def _read(task: str, split: str) -> list[dict]:
-    path = ROOT / VARIANT / task / f"{split}.json"
+def _read(task: str, split: str, variant: str = VARIANT) -> list[dict]:
+    path = ROOT / variant / task / f"{split}.json"
     if not path.is_file():
         raise FileNotFoundError(f"{path} missing — run scripts/fetch_trace.sh")
     return json.loads(path.read_text())
@@ -144,6 +156,7 @@ def load_task(
     seed: int = 0,
     tokenizer=None,
     max_length: int | None = None,
+    variant: str = VARIANT,
 ) -> DatasetDict:
     """Load one TRACE task as train/eval splits of formatted text.
 
@@ -156,7 +169,7 @@ def load_task(
 
     out, stats = {}, {}
     for split, want in (("train", n_train), ("eval", n_eval)):
-        rows = _read(name, split)
+        rows = _read(name, split, variant)
         # Select *before* formatting. Tokenizing all 5000 rows to keep a
         # handful is the dominant cost of preparing a stage, and it made the
         # CPU test suite take minutes to run two training steps. Ordering is

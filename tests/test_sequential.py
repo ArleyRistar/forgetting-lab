@@ -39,7 +39,7 @@ def tok():
 def cfg(**over) -> RunConfig:
     base = dict(
         run_name="t",
-        stages=(StageConfig("FOMC", 2, 1e-4), StageConfig("Py150", 2, 1e-4)),
+        stages=(StageConfig("FOMC", max_steps=2, learning_rate=1e-4), StageConfig("Py150", max_steps=2, learning_rate=1e-4)),
         probe=ProbeConfig(n_eval=2, max_length=128, batch_size=2),
     )
     return RunConfig(**{**base, **over})
@@ -181,7 +181,7 @@ def test_full_mode_trains_every_parameter(tmp_path, tok):
 
 def test_both_modes_complete_a_run(tmp_path, tok):
     for mode in ("lora", "full"):
-        c = cfg(mode=mode, stages=(StageConfig("FOMC", 2, 1e-4),))
+        c = cfg(mode=mode, stages=(StageConfig("FOMC", max_steps=2, learning_rate=1e-4),))
         state = sequential.run(c, tmp_path / mode, model=tiny_model(tok), tokenizer=tok)
         assert state.complete, f"{mode} mode did not complete"
         assert (tmp_path / mode / "probe-after-0.json").exists()
@@ -207,7 +207,7 @@ def test_incomplete_checkpoint_is_rejected_so_the_stage_retrains(tmp_path, tok):
 
 
 def test_run_retrains_past_an_unloadable_checkpoint(tmp_path, tok):
-    c = cfg(stages=(StageConfig("FOMC", 2, 1e-4),))
+    c = cfg(stages=(StageConfig("FOMC", max_steps=2, learning_rate=1e-4),))
     state = RunState.create_or_load(tmp_path / "r", c)
     junk = sequential.stage_dir(tmp_path / "r", 0, "FOMC")
     junk.mkdir(parents=True)
@@ -217,3 +217,49 @@ def test_run_retrains_past_an_unloadable_checkpoint(tmp_path, tok):
     result = sequential.run(c, tmp_path / "r", model=tiny_model(tok), tokenizer=tok)
     assert result.complete
     assert sequential.checkpoint_ok(result.stages[0].checkpoint, c.mode)
+
+
+# -- phase-1b: protocol fidelity -----------------------------------------
+
+
+def test_optimizer_state_is_empty_at_the_start_of_every_stage(tmp_path, tok):
+    """2606.27634 resets AdamW per task. Our harness builds a fresh SFTTrainer
+    per stage, which *should* mean a fresh optimizer — but a carried-over
+    optimizer would invalidate the comparison with nothing in the output to
+    show it, so assert rather than assume."""
+    import trl
+    from transformers import TrainerCallback
+
+    seen = []
+
+    class Spy(TrainerCallback):
+        def on_train_begin(self, args, state, control, optimizer=None, **kw):
+            seen.append(None if optimizer is None else len(optimizer.state))
+
+    original = trl.SFTTrainer
+
+    class Patched(original):
+        def __init__(self, *a, **k):
+            k["callbacks"] = list(k.get("callbacks") or []) + [Spy()]
+            super().__init__(*a, **k)
+
+    trl.SFTTrainer = Patched
+    try:
+        sequential.run(cfg(), tmp_path / "r", model=tiny_model(tok), tokenizer=tok)
+    finally:
+        trl.SFTTrainer = original
+
+    assert len(seen) == 2, f"expected one train start per stage, got {seen}"
+    # A vacuous pass (callback never given the optimizer) must fail, not sneak by.
+    assert all(v is not None for v in seen), f"optimizer never observed: {seen}"
+    assert all(v == 0 for v in seen), f"optimizer state carried across stages: {seen}"
+
+
+def test_epochs_schedule_runs_and_records_steps(tmp_path, tok):
+    c = cfg(stages=(StageConfig("FOMC", learning_rate=1e-4, epochs=1),),
+            probe=ProbeConfig(n_eval=2, max_length=128, batch_size=2))
+    state = sequential.run(c, tmp_path / "r", model=tiny_model(tok), tokenizer=tok)
+    assert state.complete
+    # The resolved step count must be recorded, or an epochs run and a
+    # max_steps run cannot be compared afterwards.
+    assert state.stages[0].steps_done > 0

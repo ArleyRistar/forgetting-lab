@@ -24,11 +24,44 @@ MODES = ("lora", "full")
 REPO = Path(__file__).resolve().parents[2]
 
 
+DEFAULT_LORA_TARGETS = (
+    "q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
+)
+
+
 @dataclass(frozen=True)
 class StageConfig:
     task: str
-    max_steps: int
     learning_rate: float
+    # Exactly one of these. 1a fixed a step count; 2606.27634 trains one epoch
+    # per task, and at 500 examples those are very different amounts of training.
+    max_steps: int | None = None
+    epochs: float | None = None
+
+
+@dataclass(frozen=True)
+class LoraSpec:
+    """LoRA shape. 1a hardcoded r=16/α=32 over seven named modules; the paper
+    uses r=8/α=16 over `all-linear`, which is a *different adapted set*, not
+    just a smaller one."""
+    r: int = 16
+    alpha: int = 32
+    dropout: float = 0.05
+    bias: str = "none"
+    target_modules: str | tuple[str, ...] = DEFAULT_LORA_TARGETS
+
+
+@dataclass(frozen=True)
+class TrainSpec:
+    """Training shape, separate from probe shape so each is explicit in the
+    hash. `max_length` here and in `probe` normally match — a probe seeing more
+    context than training did is legitimate but is a different measurement, so
+    it should be a choice rather than an accident."""
+    batch_size: int = 4
+    grad_accum: int = 4
+    max_length: int = 1024
+    lr_scheduler: str = "cosine"
+    warmup_steps: int | None = None   # None -> min(20, max(1, steps // 10))
 
 
 @dataclass(frozen=True)
@@ -51,10 +84,17 @@ class ProbeConfig:
 class RunConfig:
     run_name: str
     model: str = "HuggingFaceTB/SmolLM2-360M"
+    # Pin the weights, not just the name. Llama 3.2 1B is gated upstream and we
+    # use a byte-identical mirror; a mirror silently ceasing to be identical is
+    # the failure that matters, so the digest is checked on load.
+    model_sha256: str | None = None
+    trace_variant: str = "LLM-CL-Benchmark_5000"
     seed: int = 0
     mode: str = "lora"
     optim: str = "adamw_torch"
     stages: tuple[StageConfig, ...] = ()
+    lora: LoraSpec = field(default_factory=LoraSpec)
+    train: TrainSpec = field(default_factory=TrainSpec)
     probe: ProbeConfig = field(default_factory=ProbeConfig)
 
     # -- construction ----------------------------------------------------
@@ -65,8 +105,16 @@ class RunConfig:
         if not isinstance(raw, dict):
             raise ValueError(f"{path}: expected a YAML mapping")
         stages = tuple(StageConfig(**s) for s in raw.pop("stages", []))
-        probe = ProbeConfig(**(raw.pop("probe", {}) or {}))
-        cfg = cls(stages=stages, probe=probe, **raw)
+        lora_raw = raw.pop("lora", {}) or {}
+        if isinstance(lora_raw.get("target_modules"), list):
+            lora_raw["target_modules"] = tuple(lora_raw["target_modules"])
+        cfg = cls(
+            stages=stages,
+            lora=LoraSpec(**lora_raw),
+            train=TrainSpec(**(raw.pop("train", {}) or {})),
+            probe=ProbeConfig(**(raw.pop("probe", {}) or {})),
+            **raw,
+        )
         cfg.validate()
         return cfg
 
@@ -75,17 +123,34 @@ class RunConfig:
             raise ValueError(f"mode must be one of {MODES}, got {self.mode!r}")
         if not self.stages:
             raise ValueError("a run needs at least one stage")
+        if self.trace_variant not in trace.VARIANTS:
+            raise ValueError(f"unknown TRACE variant {self.trace_variant!r}; "
+                             f"known: {trace.VARIANTS}")
         for s in self.stages:
             if s.task not in trace.TASKS:
                 raise ValueError(f"unknown task {s.task!r}; known: {trace.TASKS}")
-            if s.max_steps <= 0:
+            # Exactly one schedule. Neither is a silent zero-step stage; both is
+            # ambiguous about which one actually ran.
+            if (s.max_steps is None) == (s.epochs is None):
+                raise ValueError(f"{s.task}: set exactly one of max_steps or epochs")
+            if s.max_steps is not None and s.max_steps <= 0:
                 raise ValueError(f"{s.task}: max_steps must be positive")
+            if s.epochs is not None and s.epochs <= 0:
+                raise ValueError(f"{s.task}: epochs must be positive")
             if s.learning_rate <= 0:
                 raise ValueError(f"{s.task}: learning_rate must be positive")
-        if self.probe.n_eval <= 0:
-            raise ValueError("probe.n_eval must be positive")
-        if self.probe.batch_size <= 0:
-            raise ValueError("probe.batch_size must be positive")
+        for name, val in (("probe.n_eval", self.probe.n_eval),
+                          ("probe.batch_size", self.probe.batch_size),
+                          ("probe.max_length", self.probe.max_length),
+                          ("train.batch_size", self.train.batch_size),
+                          ("train.grad_accum", self.train.grad_accum),
+                          ("train.max_length", self.train.max_length),
+                          ("lora.r", self.lora.r),
+                          ("lora.alpha", self.lora.alpha)):
+            if val <= 0:
+                raise ValueError(f"{name} must be positive")
+        if isinstance(self.lora.target_modules, str) and self.lora.target_modules != "all-linear":
+            raise ValueError("lora.target_modules must be a list or the string 'all-linear'")
         for t in self.probe_tasks:
             if t not in trace.TASKS:
                 raise ValueError(f"unknown probe task {t!r}")
