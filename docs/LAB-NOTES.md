@@ -776,6 +776,70 @@ two points. Phase 2 requires >=3 seeds on anything result-bearing (spec §7) and
 that is not a formality — the normalisation ambiguity above could easily be
 larger than the effect.
 
+## 2026-08-09 — 2606.27634 protocol read; two Lima data traps (phase-1b prep)
+
+Fetched and read [arXiv 2606.27634](https://arxiv.org/abs/2606.27634),
+*Continual Learning for Sequential Personalization of Small Language Models: A
+Stability Monitoring Analysis* (Paula, Kupssinskü & Barros). The spec picked it
+as the calibration target sight-unseen; it is a better fit than expected —
+**it uses TRACE**, so the data we already vendored is the data they used.
+
+Their protocol, quoted rather than inferred:
+
+- Models: Qwen 3.5 0.8B, **Llama 3.2 1B Instruct**, Gemma 3 1B IT (all ≤1B).
+- Tasks: **FOMC → ScienceQA → NumGLUE-cm**, 500 train each — i.e. the **`_500`
+  variant**, not the `_5000` we pinned. Reversed order also tested.
+- LoRA r=8, α=16, dropout 0.05, no bias, target **`all-linear`**; AdamW **reset
+  per task**; lr 5e-5; batch 2 × accum 8 = 16 effective; **1 epoch per task**;
+  seq len 512.
+- Metrics: ACC, BWT (`a_k,j − a_j,j`), FWT; stability via **KL from base**,
+  entropy change, top-2 margin, all on a fixed reference set disjoint from every
+  task's train and eval.
+- Results: Qwen final acc **0.591 ± 0.012**, KL drift 0.300; Gemma **0.320 ±
+  0.029**, KL peak 1.623 ± 0.157; **KL vs accuracy r = −0.497, p < 0.001**; KL
+  ≈ **0.8** proposed as an order-independent instability threshold.
+
+The calibration target is the **KL–accuracy relationship**, not an absolute
+accuracy. Matching an accuracy on a different model would prove nothing;
+reproducing the negative correlation is a claim about the phenomenon.
+
+### Trap 1 — Lima's held-out splits are entirely empty
+
+Lima is TRACE's replay set and the obvious reference-set candidate: disjoint
+from every task by construction. But its `eval` and `test` splits are
+**100% empty answers — all 300 rows in each, in both `_500` and `_5000`**. Only
+`Lima/train` (1030 rows, median answer 1563 chars) carries content.
+
+So `Lima/eval.json` — the natural reach for a held-out reference set — has
+**zero scorable answer tokens**. Use `Lima/train`, held out and never trained on.
+
+The probe already refuses to invent a number here: an empty answer contributes
+no unmasked labels, `n_tokens` reaches 0, and it returns `warning: "zero answer
+tokens scored; the NLL below is not a measurement"`. That warning field was
+added on the strength of the memory probe's fake `0.0` back on 2026-08-08, and
+this is the second time it has paid for itself. Phase 1b pins it as a
+regression test against real data rather than a synthetic case.
+
+### Trap 2 — NumGLUE-cm is their third task and has 41 eval examples
+
+It carries the most forgetting signal in the sequence (trained last, probed
+after everything) on the **smallest held-out set of any TRACE task** — 41 eval,
+81 test. `n_eval` is already clamped and reported, so this needs reporting
+discipline rather than code: quote `n` beside every NumGLUE-cm number.
+
+### Consequence for the harness
+
+Six things phase 1a hardcoded now need to be config: TRACE variant, task order,
+LoRA hyperparameters (`all-linear` is a different adapted set than our seven
+named modules), epochs-vs-steps, sequence length and learning rate. Plus one
+genuinely new measurement — **KL from the base model on a reference set**, which
+is the float-side analogue of phase 1d's ternary flip-fraction and is worth
+building carefully for that reason alone. Under LoRA it needs no second copy of
+the weights: `with model.disable_adapter():` gives the base distribution exactly,
+at no extra VRAM.
+
+Plan: `docs/superpowers/plans/2026-08-09-phase-1b-calibration.md`.
+
 ## Open items — the live list
 
 Closed:
