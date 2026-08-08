@@ -39,6 +39,19 @@ TASKS = [
 # hard.
 DEV_TASKS = ["FOMC", "Py150", "ScienceQA"]
 
+# Pre-trim ceiling. Py150 prompts reach 162k characters and tokenizing one in
+# full costs far more than the ~1024 tokens that survive truncation: preparing
+# Py150 took 9.1 s before this. Left-truncation keeps the END of the prompt, so
+# slicing from the left first is exactly consistent with what follows. 20
+# chars/token is a very generous ceiling (typical is 3-5), so the token-level
+# truncation below still does the real work.
+CHARS_PER_TOKEN_CEIL = 20
+
+
+def pretrim(prompt: str, max_length: int) -> str:
+    cap = max_length * CHARS_PER_TOKEN_CEIL
+    return prompt[-cap:] if len(prompt) > cap else prompt
+
 
 def available() -> bool:
     """True when the vendored archive is present, so tests can skip not fail."""
@@ -69,7 +82,7 @@ def _truncate_prompt(prompt: str, answer: str, tokenizer, max_length: int) -> tu
     # Budget = window minus everything that is not prompt text.
     fixed = len(tokenizer(format_example("", answer), add_special_tokens=False)["input_ids"])
     budget = max_length - fixed
-    ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+    ids = tokenizer(pretrim(prompt, max_length), add_special_tokens=False)["input_ids"]
     if len(ids) <= budget:
         return prompt, False
     if budget <= 0:
@@ -89,6 +102,17 @@ def prefix_of(prompt: str) -> str:
     return f"{TAGS['user']}\n{prompt}\n{TAGS['assistant']}\n"
 
 
+def _order(n: int, seed: int) -> list[int]:
+    """A deterministic permutation of range(n), stable across processes.
+
+    Used by both the training loader and the probe. `random.shuffle` would do,
+    but hashing makes the order depend only on (seed, index) — no dependence on
+    interpreter version or call order, which is what "re-runnable from a commit
+    hash" actually requires.
+    """
+    return sorted(range(n), key=lambda i: hashlib.sha256(f"{seed}:{i}".encode()).hexdigest())
+
+
 def load_probe_examples(
     name: str, n_eval: int = 200, seed: int = 0, split: str = "eval"
 ) -> tuple[list[dict], dict]:
@@ -100,8 +124,7 @@ def load_probe_examples(
     *same* held-out examples, or the loss matrix is comparing different sets.
     """
     rows = _read(name, split)
-    order = sorted(range(len(rows)), key=lambda i: hashlib.sha256(f"{seed}:{i}".encode()).hexdigest())
-    take = order[: min(n_eval, len(rows))]
+    take = _order(len(rows), seed)[: min(n_eval, len(rows))]
     picked = [{"prompt": rows[i]["prompt"], "answer": rows[i]["answer"]} for i in take]
     stats = {"requested": n_eval, "used": len(picked), "available": len(rows)}
     return picked, stats
@@ -134,21 +157,28 @@ def load_task(
     out, stats = {}, {}
     for split, want in (("train", n_train), ("eval", n_eval)):
         rows = _read(name, split)
-        n_truncated = 0
-        texts = []
-        for ex in rows:
+        # Select *before* formatting. Tokenizing all 5000 rows to keep a
+        # handful is the dominant cost of preparing a stage, and it made the
+        # CPU test suite take minutes to run two training steps. Ordering is
+        # the same deterministic hash the probe uses, so `seed` still fully
+        # determines which examples a stage sees.
+        take = _order(len(rows), seed)
+        if want is not None:
+            take = take[: min(want, len(rows))]
+
+        n_truncated, texts = 0, []
+        for i in take:
+            ex = rows[i]
             prompt, cut = _truncate_prompt(ex["prompt"], ex["answer"], tokenizer, max_length)
             n_truncated += cut
             texts.append(format_example(prompt, ex["answer"]))
-        ds = Dataset.from_dict({"text": texts}).shuffle(seed=seed)
-        # Clamp rather than fail: NumGLUE-cm only has 41 eval examples.
-        if want is not None:
-            ds = ds.select(range(min(want, len(ds))))
-        out[split] = ds
+
+        out[split] = Dataset.from_dict({"text": texts})
         stats[split] = {
             "requested": want,
-            "used": len(ds),
+            "used": len(texts),
             "available": len(rows),
+            # Counted over what was actually used, not over the whole file.
             "prompts_truncated": n_truncated,
         }
 

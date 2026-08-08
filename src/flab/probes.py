@@ -83,6 +83,7 @@ def _encode(tokenizer, prompt: str, answer: str, max_length: int):
     answer-token NLL is the measurement and a cut answer is a corrupted data
     point rather than a noisy one.
     """
+    prompt = trace.pretrim(prompt, max_length)
     prefix_ids = tokenizer(trace.prefix_of(prompt), add_special_tokens=False)["input_ids"]
     answer_ids = tokenizer(answer, add_special_tokens=False)["input_ids"]
 

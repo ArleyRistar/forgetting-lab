@@ -600,6 +600,54 @@ still cached.
 Worth generalising: **when reserved runs far above allocated, suspect shape
 diversity before suspecting a leak.**
 
+## 2026-08-08 — harness performance notes (phase-1a tasks 4-5)
+
+Three fixes found while building the stage loop, none of which changed a single
+probe number — verified by re-running the baseline against the values recorded
+earlier today and getting them back to six decimals.
+
+**1. Prepare only what a stage consumes.** `load_task` tokenized all 5000 rows
+and *then* selected, so a 2-step CPU test paid for 5000 examples. Selecting
+first cut the test path from **8.4 s to 0.05 s** (168x) and a real 200-step
+Py150 stage from 8.4 s to 3.7 s. Not a change of experiment: example order is a
+deterministic hash of `(seed, index)`, so the first N of a 5000-row pool and a
+pool of exactly N are the *same* N examples. Whole suite: 116 s -> 34.6 s.
+
+**2. Pre-trim prompts by characters before tokenizing.** Py150 prompts reach
+162k characters; tokenizing one in full to keep ~1024 tokens is pure waste.
+Worth only ~8% on its own (9.1 -> 8.4 s) because the cap only bites on the
+extreme tail, but it bounds the pathological case.
+
+**3. A checkpoint directory existing is not a checkpoint.** A crash *during*
+`save_model` leaves the directory present but unloadable, and resume then died
+inside peft complaining about a missing `adapter_config.json` instead of just
+retraining the stage — the wrong failure at 3 a.m. `checkpoint_ok()` now
+validates the contents per mode, and an unloadable checkpoint is treated as no
+checkpoint. Found because a test faked a checkpoint with `mkdir` and the
+harness, correctly, tried to load it.
+
+### Crash ordering, written down because it is easy to get backwards
+
+A stage is marked DONE only once its **boundary probe is on disk**. Marking
+DONE when training finishes would mean a crash in the gap between training and
+probing loses that boundary forever: the stage is skipped on resume and nothing
+ever raises. Training is still not repeated in that window, because the
+checkpoint is recorded *before* the probe runs — so a resume finds the weights,
+skips training, and goes straight to probing. Both halves have tests.
+
+### Measured prompt truncation at seq 1024, over 3200 training examples
+
+| task | truncated | of |
+| --- | --- | --- |
+| FOMC | 0 | 3200 |
+| ScienceQA | 7 | 3200 |
+| Py150 | **659** | 3200 (21%) |
+
+Py150's 21% is consistent with the 25% seen on its held-out split, and well
+above the 13% the character histogram predicted — code tokenizes at fewer
+characters per token than prose. Answers are never truncated; this is prompt
+context only.
+
 ## Open items — the live list
 
 Closed:
