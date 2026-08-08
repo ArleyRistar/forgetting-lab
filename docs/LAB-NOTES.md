@@ -448,6 +448,87 @@ FOMC's one-token answer is a feature: that column is a clean classification
 log-loss, strictly more sensitive than the accuracy phase 0 showed to be a dead
 instrument at this scale.
 
+## 2026-08-08 — clock-cap A/B: the hypothesis is refuted (closes open item 2)
+
+`scripts/clock_ab.sh`, 150 steps/arm of full fine-tune (`mem_probe.py`, batch 4
+x seq 1024, bf16, gradient checkpointing), cooldown between arms, analysed by
+`scripts/clock_ab_report.py`. 150 steps rather than the 50 the open item
+proposed, because steady state takes 10+ min on this chassis and 50 steps would
+have measured mostly the cold regime — which is precisely the regime the result
+turns out to hinge on.
+
+**Hypothesis:** a *lower* SM clock cap raises *average* throughput by preventing
+the boost -> overheat -> hard-throttle oscillation. **Result: no. 1000 MHz is
+8.5% slower.**
+
+| metric | 1200 MHz | 1000 MHz |
+| --- | --- | --- |
+| wall-clock, 150 steps | **666 s** | **723 s** |
+| mean s/it overall | 4.45 | 4.82 |
+| mean s/it, steps 2-50 | 4.00 | 4.52 |
+| mean s/it, steps 100-150 | 5.04 | 5.32 |
+| SM clock mean | 1041 MHz | 916 MHz |
+| SM clock min | 660 MHz | 540 MHz |
+| temp mean / max | 79.6 / 87 C | 80.8 / 87 C |
+| power mean | 68.9 W | 63.2 W |
+
+### Why — the cap does not prevent throttling, it only lowers the ceiling
+
+Splitting each arm in half is what makes the mechanism legible:
+
+| arm | first half | second half |
+| --- | --- | --- |
+| 1200 | 1196 MHz, sd 19, 72 C | 892 MHz, sd 99, **87 C** |
+| 1000 | 1005 MHz, sd **0**, 75 C | 829 MHz, sd 118, **87 C** |
+
+While cool, the 1000 MHz cap is held *exactly* — standard deviation 0. That is
+genuinely the stable behaviour the hypothesis wanted, and if the run had been
+50 steps long it would have looked like a win. Once heat-soaked, both arms hit
+the same **87 C** wall and both throttle hard, and the capped arm throttles
+*below its own cap* to 829 MHz. The throttle is temperature-driven and the cap
+is not a temperature control. So capping only gives away speed during the phase
+when the card could have run fast, and buys nothing during the phase when it
+cannot.
+
+Corollary worth keeping: **87 C is the operating point of this chassis under
+sustained load regardless of clock cap.** Dropping the cap by 200 MHz cut mean
+power 68.9 -> 63.2 W and moved equilibrium temperature not at all.
+
+### The confound, and why it does not overturn this
+
+Arm 2 started at **50 C**, arm 1 at **39 C** — the cooldown's 900 s deadline
+expired before reaching its 45 C target. The bias is directional and handicaps
+1000 MHz, which was flagged before the numbers were read.
+
+It does not rescue the hypothesis. The soaked window (steps 100-150) is
+temperature-matched by construction — both arms are pinned at 87 C — and
+1000 MHz is still **5.6% slower** there (5.32 vs 5.04 s/it). The confound
+distorts the cold phase, which is the phase that is not doing the work.
+
+**Decision: keep the standing 1200 MHz cap.** No rerun; the temperature-matched
+window already answers it. Fix the harness before reusing it: cool to a target
+or *abort*, never silently proceed on timeout.
+
+### Two side-observations
+
+1. **The measured derate here is 1.26x, not 1.9x** (4.00 cold -> 5.04 soaked at
+   1200 MHz), despite the arm ending pinned at 87 C. The 1.9x planning number
+   in §4 came from a different workload. Do **not** relax the 1.9x budget on the
+   strength of this — one 11-minute full-FT run is not the same measurement —
+   but the two numbers need reconciling before they are trusted to the same
+   precision. Logged rather than acted on.
+2. Both arms returned identical memory components (8.00 B/param, `warning:
+   null`), independently reproducing the 2026-08-08 memory probe on a different
+   day and a different clock cap.
+
+### Method note
+
+The first version of the report script silently merged two tqdm bars — the
+`Loading weights: 106/290` bar and the training bar — producing a "290-step"
+arm with a *negative* mean s/it. Nonsense that obvious is harmless; the danger
+is the same bug landing on numbers that merely look plausible. The parser now
+separates bars by their total and takes the one with the most entries.
+
 ## Open items — the live list
 
 Closed:
@@ -459,18 +540,20 @@ Closed:
   card-limited.
 - ~~4. Measure full-FT memory directly~~ — done 2026-08-08. Computed table
   validated within ~10%.
+- ~~2. Clock-cap A/B~~ — done 2026-08-08. **Hypothesis refuted**: 1000 MHz is
+  8.5% slower overall and 5.6% slower in the temperature-matched soaked window.
+  The cap does not prevent thermal throttling. Keep 1200 MHz.
+- ~~6. Add `--log_samples` to `scripts/eval.sh`~~ — done 2026-08-08 in `89935a8`;
+  the entry below was stale.
 
 Open:
 
-2. **Clock-cap A/B** (1000 vs 1200 MHz over ~50 steps each) — does a lower cap
-   raise *average* throughput by avoiding boost→throttle oscillation?
-   **Needs a design card before compute is spent (spec §3).**
 5. **Does the unmerged-adapter 1.89× penalty also hit batched loglikelihood
    tasks?** Likely much smaller (compute-bound, not decode-bound). If it does,
    add adapter-merging to the eval wrapper.
-6. **Add `--log_samples` to `scripts/eval.sh`** so paired significance tests are
-   possible. Cheap, and phase 1 needs it — the phase-0 eval could not be tested
-   properly for want of it.
 7. **Measure the ternary QAT rows directly.** Everything measured so far is
    float training; the materialised-quantized-tensor term is still computed.
    Naturally folds into the 1c recipe shakedown at 135M.
+8. **Reconcile the two derate numbers** — §4 budgets 1.9x, the clock-cap A/B
+   measured 1.26x over 11 min of full fine-tuning at 87 C. Different workloads;
+   until reconciled, keep budgeting at 1.9x (the conservative one).

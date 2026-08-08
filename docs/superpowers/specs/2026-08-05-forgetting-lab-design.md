@@ -126,7 +126,10 @@ If an approved experiment needs more than this, rent an hourly cloud GPU for
 that experiment. No hardware purchases.
 
 Thermals: **`nvidia-smi -pl` is unsupported on this vBIOS** — the clock cap
-(`-lgc`, currently 1200 MHz) is the only throttle available. Elevate chassis,
+(`-lgc`, currently 1200 MHz) is the only throttle available. Lowering it does
+not help: a 1000-vs-1200 MHz A/B (2026-08-08) found 1000 MHz **8.5% slower**,
+because the cap is not a temperature control — both settings converge on the
+same 87 °C wall and throttle below their own cap there. Keep 1200 MHz. Elevate chassis,
 headless. Measured derate is **~1.9× slower than cold** once heat-soaked
 (10+ min to steady state), and that factor — not the old ~15–30% estimate — is
 what every card's GPU-h estimate must use.
