@@ -80,12 +80,16 @@ Parameter ceilings follow from bytes-per-parameter:
 | configuration | B/param | ceiling |
 | --- | --- | --- |
 | LoRA, base resident in bf16 | 2 | ~3.1B — but activation-bound first; **keep ≤2B** |
-| Float full FT, bf16 + 8-bit Adam | 6 | ~1.04B |
-| Float full FT, pure bf16 AdamW | 8 | ~780M |
-| Float full FT, fp32 master + fp32 Adam | 16 | ~390M |
-| Ternary QAT, fp32 latent + 8-bit Adam | 8.2 | ~760M |
-| Ternary QAT, fp32 latent + fp32 Adam | 16 | ~390M |
-| Ternary QAT, all-fp32 + materialised copy | 18 | ~350M |
+| Float full FT, bf16 + 8-bit Adam | **6.81** ᵐ | **~920M** |
+| Float full FT, pure bf16 AdamW | **8.00** ᵐ | **~740M** |
+| Float full FT, fp32 master + AdamW | **16.00** ᵐ | **~340M** |
+| Ternary QAT, fp32 latent + 8-bit Adam | ~9 | ~650M |
+| Ternary QAT, fp32 latent + fp32 Adam | ~18 | ~300M |
+
+ᵐ = measured 2026-08-08, not computed. Ternary rows remain computed: they add
+the materialised quantized tensor, which the float probe does not exercise.
+Budget against `peak_reserved` (8–13% above allocated) — that is what occupies
+the card.
 
 Ternary QAT still **has no PEFT escape hatch** — full fine-tuning only. But the
 headline correction is that **the ternary ceiling is a recipe decision, not a
@@ -96,14 +100,20 @@ layer. The earlier "≈350–560M" was the all-fp32 end of that range. Route B a
 8-bit Adam, which is the single highest-leverage choice in the 1c recipe.
 
 Confidence: **validated 2026-08-08** by direct full-fine-tune measurement
-(`scripts/mem_probe.py`). All three float configurations landed within ~10% of
-the computed figures — bf16+AdamW 7.66 B/param (predicted 8), bf16+8-bit Adam
-6.37 (predicted 6), fp32 master 17.71 (predicted 16). Two corrections from the
-measurement: **budget 18 B/param, not 16, for fp32 latent weights** (autocast
-keeps a transient bf16 weight cache), and that configuration peaked 0.09 GiB
-below OOM at 360M — so fp32-latent QAT above ~350M is out of reach here, not
-merely tight. The **ternary** rows remain computed: the probe covers float
-training, not the materialised quantized tensor QAT adds on top.
+(`scripts/mem_probe.py`), reading components off the live optimizer. Two
+configurations hit the predicted value exactly (8.00 and 16.00 B/param). Two
+corrections the arithmetic missed:
+
+- **8-bit Adam gives 6.81 B/param at this scale, not 6** — bitsandbytes keeps
+  the embedding's optimizer state in fp32, and the 49k-vocab embedding is 13% of
+  a 360M model. The saving improves with model size; do not assume 6.
+- **fp32-latent recipes pay ~18 B/param all-in**, since autocast holds a
+  transient bf16 weight cache. At 360M that configuration used **99.1% of the
+  card** — it is at the ceiling, not near it.
+
+The **ternary** rows remain computed: the probe covers float training, not the
+materialised quantized tensor QAT adds on top. Measuring those folds naturally
+into the 1c shakedown at 135M.
 
 Other limits, unchanged:
 

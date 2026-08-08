@@ -253,30 +253,48 @@ evals. **Queued as open item 4.**
 ### Measured 2026-08-08 (closes open item 4)
 
 `scripts/mem_probe.py`, 20-step full fine-tune, same batch 4 × seq 1024 and
-gradient checkpointing as the LoRA run. Measured bytes/param is
-`(peak_allocated − 892 MiB activations) / 361.8M`:
+gradient checkpointing as the LoRA run. Components read directly off the live
+optimizer, not inferred:
 
-| configuration | peak alloc | peak reserved | measured B/param | predicted | ceiling (was) |
-| --- | --- | --- | --- | --- | --- |
-| bf16 + `adamw_torch` | 3.45 GiB | 3.90 GiB | **7.66** | 8 | 813M (778M) |
-| bf16 + `adamw_bnb_8bit` | 3.02 GiB | 3.26 GiB | **6.37** | 6 | 978M (1038M) |
-| fp32 master + `adamw_torch` | 6.84 GiB | 7.41 GiB | **17.71** | 16 | 352M (389M) |
+| configuration | weights | grads | optim | **total** | predicted | activations | resv/alloc |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| bf16 + `adamw_torch` | 2.00 | 2.00 | 4.00 | **8.00** | 8 | 776 MiB | 1.13 |
+| bf16 + `adamw_bnb_8bit` | 2.00 | 2.00 | 2.81 | **6.81** | 6 | 739 MiB | 1.08 |
+| fp32 master + `adamw_torch` | 4.00 | 4.00 | 8.00 | **16.00** | 16 | 1481 MiB | 1.08 |
 
-**The computed table holds — every configuration within ~10% of prediction**,
-and the two that matter for recipe choice bracket the ternary range as derived.
-Ceilings revised above; the 350M → 760M ternary span and the "recipe decision,
-not hardware limit" conclusion are unchanged.
+Two rows are *exactly* the predicted value, which confirms the accounting
+method: bf16 params give bf16 AdamW states (torch allocates state
+`zeros_like(p)`), and fp32 params give the classic 16 B/param. The two
+deviations are the interesting part.
 
-Two things the measurement adds that the arithmetic did not:
+**1. 8-bit Adam saves less than the arithmetic says — 6.81 B/param, not 6.**
+bitsandbytes keeps the **embedding's** optimizer state in fp32 rather than int8.
+Check: 47.2M embedding params at 8 B + 314.6M at 2 B = 1,006,757,760 predicted
+against 1,017,421,312 measured (1.1% out; the remainder is blockwise absmax
+quantization state). This is **scale-dependent** — the 49k-vocab embedding is
+13% of a 360M model but a far smaller fraction of a 1B one, so 8-bit Adam gets
+closer to its nominal saving as models grow. Do not assume 6 B/param at 360M.
 
-1. **fp32 master weights cost ~17.7 B/param, not 16.** The extra ~1.7 is
-   autocast's transient bf16 weight cache (~2 B/param). Any recipe holding fp32
-   latent weights should budget 18, not 16.
-2. **That configuration came within 0.09 GiB of OOM at 360M** — peak *reserved*
-   was 7.41 GiB against 7.5 GiB usable. Not "roughly the ceiling": it *is* the
-   ceiling, with no room for a longer sequence, a larger batch, or an eval pass
-   sharing the device. Treat fp32-latent QAT above ~350M as out of reach on this
-   card rather than merely tight.
+**2. fp32 activations are double the bf16 ones** — 1481 MiB vs 776 MiB — which
+is autocast's transient bf16 weight cache: 776 + (361.8M × 2 B = 690 MiB)
+= 1466 MiB predicted vs 1481 measured. So an fp32-latent recipe pays ~18
+B/param all-in, not 16.
+
+**3. Budget against `peak_reserved`, not `peak_allocated`.** The allocator holds
+8–13% more than it hands out, and reserved is what actually occupies the card.
+The fp32 run reserved 7.58 GiB and, with the 190 MiB context, used **99.1% of
+the 7.66 GiB card**. That configuration is not "near" the ceiling at 360M; it is
+*at* it, with nothing left for a longer sequence, a bigger batch, or a
+concurrent eval.
+
+Ceilings re-derived from measured components, budgeting reserved against 95% of
+the card:
+
+| configuration | B/param | ceiling |
+| --- | --- | --- |
+| bf16 + 8-bit Adam | 6.81 | **~920M** |
+| bf16 + AdamW | 8.00 | **~740M** |
+| fp32 master + AdamW | 16.00 | **~340M** |
 
 Still computed rather than measured: the **ternary** rows specifically. The
 probe exercises float full fine-tuning, so it validates the per-parameter
