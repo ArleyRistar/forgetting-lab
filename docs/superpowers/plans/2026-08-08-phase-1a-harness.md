@@ -24,6 +24,11 @@ before any GPU step here — never two GPU jobs at once (CLAUDE.md).
 
 - bf16 + gradient checkpointing on all training (spec §4).
 - Development runs: **SmolLM2-360M, seed 0, single model** (spec §6 1a).
+- **Three tasks, not eight** (Arley, 2026-08-08). All nine TRACE sets are still
+  vendored in task 1 — fetching is one download and the archive is the
+  provenance root — but the run configs, the loss matrix and the shakedown use
+  a 3-task subset. Widening to 8 is a config change, not a code change, and is
+  revisited after 1b's calibration gate passes.
 - **Likelihood probes are the instrument.** Phase 0 measured benchmark accuracy
   moving < 1.1 SE while held-out loss moved clearly. Accuracies are secondary
   reporting only; they do not gate anything in this harness.
@@ -72,9 +77,20 @@ has gone by the time we need it, every downstream task changes. Find out now.
 - Data ships as one Drive zip, *not* `load_dataset()`-able.
 - The released format is genuinely uniform, which is what spec §6 1a wanted
   from "one format, one loader": per task, `train.json` / `eval.json` /
-  `test.json`, each a JSON list of `{"prompt": ..., "answer": ...}`.
+  `test.json`, each a JSON list of `{"prompt": ..., "answer": ...}` — confirmed
+  by inspection, exactly two keys, no exceptions.
 - Nine sets: eight training tasks (C-STANCE, FOMC, MeetingBank, Py150,
   ScienceQA, NumGLUE-cm, NumGLUE-ds, 20Minuten) plus Lima as a replay set.
+- **The archive contains four variants**, which the README does not mention:
+  `LLM-CL-Benchmark_{500,1000,5000}` and `LLM-CL-Benchmark_Reasoning`. Use
+  **`_5000`** — it is the canonical TRACE training set (5000 train per task).
+  The `_500` variant is a subset whose 20Minuten directory is also **missing
+  `eval.json`**, so a loader that globs blindly across variants will break.
+  Pin the variant in the loader; do not auto-discover it.
+- Held-out sizes vary enormously by task (NumGLUE-cm has **41** eval examples,
+  C-STANCE/Py150/ScienceQA have 2000). Any `n_eval` the config asks for must be
+  clamped to what exists, and the actual count reported — a probe silently
+  running on 41 examples where 200 were requested is a number nobody can trust.
 
 - [ ] **Step 1: Download and checksum the archive**
 
@@ -111,6 +127,14 @@ def load_task(name, n_train=None, n_eval=200, seed=0) -> DatasetDict: ...
 Reuse `data.py`'s `TAGS` rather than inventing a second chat format — the
 conversion corpus and the task corpus must not differ in formatting, or the
 format change becomes a confound in the forgetting measurement.
+
+**Truncate the prompt from the left; never truncate the answer.** Answer-token
+NLL *is* the measurement, so an example whose answer got cut by the window is
+not a noisy data point, it is a corrupted one. Left-truncation also keeps the
+tokens immediately preceding the completion, which is the context that matters
+for Py150's 13% long tail. Assert in the loader that every formatted example
+retains its full answer, and count how many prompts were truncated so the
+number lands in LAB-NOTES rather than staying invisible.
 
 - [ ] **Step 4: Test and commit**
 
@@ -149,14 +173,55 @@ seed: 0
 mode: lora                  # lora | full   <- 1c needs `full`; ternary has no PEFT escape hatch
 optim: adamw_torch          # adamw_bnb_8bit for full FT: 6.81 B/param measured
 stages:
-  - {task: C-STANCE, max_steps: 200, learning_rate: 2.0e-4}
-  - {task: FOMC,     max_steps: 200, learning_rate: 2.0e-4}
-  - {task: Py150,    max_steps: 200, learning_rate: 2.0e-4}
+  - {task: FOMC,      max_steps: 200, learning_rate: 2.0e-4}
+  - {task: Py150,     max_steps: 200, learning_rate: 2.0e-4}
+  - {task: ScienceQA, max_steps: 200, learning_rate: 2.0e-4}
 probe:
-  tasks: all                # probe EVERY task at EVERY boundary, not just seen ones
+  tasks: all                # every task in `stages`, at EVERY boundary - not just seen ones
   n_eval: 200
   max_length: 1024
 ```
+
+`probe.tasks: all` means every task named in `stages` (3 here → a 3×3 matrix
+over 4 boundaries), *not* all nine vendored sets. It also accepts an explicit
+list, so probing held-out tasks the run never trains on — pure forward transfer
+— stays available without a code change.
+
+**Why these three** — chosen from the measured length profile below, not from
+the task names. Classification → code → science QA is about as far apart in
+token distribution and output shape as TRACE goes *while staying inside a 360M
+English model's competence and inside seq 1024*.
+
+Two candidates were ruled out by measurement rather than taste:
+
+- **MeetingBank is disqualified at seq 1024** — 58% of its examples exceed the
+  window. Truncating the majority of a summarization set whose target describes
+  the *whole* transcript does not make the task hard, it makes it ill-posed,
+  and the model would be learning to confabulate from a fragment.
+- **The maximal-shift triple** (C-STANCE Chinese → Py150 → 20Minuten German)
+  is tempting but SmolLM2-360M is English-trained and would sit near floor on
+  both multilingual sets — reintroducing exactly the no-dynamic-range problem
+  that made phase 0's accuracies useless. Forgetting you cannot resolve is not
+  a result.
+
+Measured over `LLM-CL-Benchmark_5000`, 2026-08-08 (prompt/answer characters):
+
+| task | n | prompt med | prompt p95 | answer med | >1024 tok |
+| --- | --- | --- | --- | --- | --- |
+| C-STANCE | 5000 | 153 | 243 | 1 | 0% |
+| FOMC | 5000 | 312 | 515 | 1 | 0% |
+| NumGLUE-ds | 5000 | 138 | 212 | 2 | 0% |
+| NumGLUE-cm | 5000 | 193 | 341 | 2 | 0% |
+| ScienceQA | 5000 | 275 | 636 | 805 | 0% |
+| Py150 | 5000 | 663 | 9107 | 32 | 13% |
+| 20Minuten | 5000 | 2220 | 4417 | 261 | 8% |
+| MeetingBank | 5000 | 5649 | 67994 | 338 | **58%** |
+| Lima (replay) | 1030 | 96 | 759 | 1563 | 0% |
+
+The chosen trio also spans three answer-length regimes — 1 token, ~8 tokens,
+~200 tokens — which is a free stress test of the probe. This is safe *because*
+NLL is only ever compared against the same task's own baseline, never across
+tasks (spec §9).
 
 `mode` and `optim` exist from day one specifically so phase 1c does not need a
 harness rewrite — the ternary recipe is a full fine-tune, and 8-bit Adam is the
@@ -214,8 +279,17 @@ primary output is a **loss matrix**, not an accuracy table.
 - [ ] **Step 1: Write the probe**
 
 Forward-only, no generation, `torch.no_grad()`, batched, bf16 autocast. For
-each task's held-out split: mean per-token NLL over answer tokens, token
-accuracy, token count.
+each task's held-out split: mean per-token NLL over **answer tokens only**
+(prompt tokens are identical across stages and would dilute the signal), token
+accuracy, and token count.
+
+**Never average NLL across tasks, and always report `n_tokens`.** The chosen
+trio spans 1 token of answer (FOMC's single letter) to ~200 (ScienceQA), so a
+cross-task mean would be dominated by whichever task is wordiest and would move
+when nothing had changed. Each task is compared only against its own
+pre-stage-0 baseline. FOMC's one-token answer is not a defect — it makes that
+column a clean classification log-loss, which is strictly more sensitive than
+the accuracy phase 0 showed to be useless.
 
 Follow `mem_probe.py`'s habit and emit an explicit **`warning` field** that is
 non-null when the probe could not actually measure what it claims — the first
@@ -355,10 +429,10 @@ git commit -m "feat: supervising run script with bounded auto-retry"
 **Budget: ~2–3 GPU-h derated** (3 × 200 steps at the measured heat-soaked
 4.85→9.43 s/step, plus 4 boundary probes). Well inside the 40 GPU-h card cap.
 
-This is harness validation, not a result-bearing run — the same category as the
-thermal, memory and clock-cap probes, which have been treated as ordinary work.
-Flagging it rather than assuming: **if Arley wants a design card even for the
-shakedown, say so and it will be written first.**
+**No design card required** (Arley, 2026-08-08). This is harness validation, not
+a result-bearing run — the same category as the thermal, memory and clock-cap
+probes. The gate still stands for everything downstream of it: the first run
+that produces a *number we would report* needs a card.
 
 - [ ] **Step 2: Prove the resume path on the real thing**
 
@@ -391,15 +465,16 @@ result-bearing run. That gets its own plan.
 
 ---
 
-## Open questions for Arley
+## Decisions taken (2026-08-08)
 
-1. **Task count.** Eight TRACE tasks make the boundary probe an 8×8 matrix and
-   8 training stages. Three or four tasks would cut the run to a quarter and
-   still exercise every code path. Recommend **starting at 3, going to 8 only
-   once 1b's calibration gate passes** — but this changes what 1b replicates, so
-   it is your call.
-2. **Does the shakedown need a design card?** See task 6 step 1.
-3. **Disk policy for 1c/1d.** LoRA adapters are ~35 MB, so phase 1a is free.
+- **Three tasks, not eight.** Vendor all nine; run three. Revisit after 1b.
+- **No design card for the shakedown.** Engineering validation, like the
+  thermal/memory/clock probes. The gate still applies to the first run whose
+  numbers we would report.
+
+## Open — does not block 1a
+
+1. **Disk policy for 1c/1d.** LoRA adapters are ~35 MB, so phase 1a is free.
    Phase 1d wants *full latent checkpoints throughout*, which at 360M is
    ~1.4 GB per checkpoint in bf16 (more with optimizer state). At every-100-steps
    across an 8-stage run that is comfortably into the hundreds of GB. The 1 TB

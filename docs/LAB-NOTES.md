@@ -382,6 +382,72 @@ be run retrospectively — the SE column above is the conservative unpaired
 approximation. Add `--log_samples` to `scripts/eval.sh` before phase 1; paired
 testing on identical items is substantially more sensitive and costs only disk.
 
+## 2026-08-08 — TRACE data vendored and profiled (phase-1a task 1)
+
+The spec says "TRACE's released datasets (one format, one loader)", which reads
+like a `load_dataset()` call. It is not one. **TRACE has no HuggingFace
+mirror** — searches for the benchmark return nothing and the obvious repo names
+404. The data ships as a single Google Drive zip published with the Jan-2024
+repo (`BeyonderXX/TRACE`, last pushed 2024-01-24).
+
+Fetched 2026-08-08 via `scripts/fetch_trace.sh`:
+
+- `TRACE-Benchmark.zip`, 77 MB
+- `sha256 11152d50f8a093b1fc9c6c924ec207915d173b9e2d715396ec8f8a837e2668a8`
+- archived to `~/archive/` as well as `data/` — that Drive link is now the
+  provenance root of every phase-1/2 result and it has no mirror.
+
+**Format holds up.** Every example is exactly `{"prompt": ..., "answer": ...}`,
+two keys, no exceptions, across all nine sets. The "one format, one loader"
+property the spec wanted is real once the archive is in hand.
+
+**The archive has four variants the README does not mention:**
+`LLM-CL-Benchmark_{500,1000,5000}` and `LLM-CL-Benchmark_Reasoning`. `_5000` is
+the canonical training set. Two traps: the `_500` variant's 20Minuten directory
+is **missing `eval.json`**, and held-out sizes vary from **41** (NumGLUE-cm) to
+2000 (C-STANCE, Py150, ScienceQA). Pin the variant; clamp `n_eval` to what
+exists and report the real count.
+
+### Length profile — this is what picked the dev tasks
+
+Prompt/answer characters over `_5000`. The `>1024 tok` column uses the usual
+~4 chars/token approximation, so it is indicative, not exact:
+
+| task | n | prompt med | prompt p95 | answer med | >1024 tok |
+| --- | --- | --- | --- | --- | --- |
+| C-STANCE | 5000 | 153 | 243 | 1 | 0% |
+| FOMC | 5000 | 312 | 515 | 1 | 0% |
+| NumGLUE-ds | 5000 | 138 | 212 | 2 | 0% |
+| NumGLUE-cm | 5000 | 193 | 341 | 2 | 0% |
+| ScienceQA | 5000 | 275 | 636 | 805 | 0% |
+| Py150 | 5000 | 663 | 9107 | 32 | 13% |
+| 20Minuten | 5000 | 2220 | 4417 | 261 | 8% |
+| MeetingBank | 5000 | 5649 | 67994 | 338 | **58%** |
+| Lima (replay) | 1030 | 96 | 759 | 1563 | 0% |
+
+**MeetingBank is unusable at seq 1024** — 58% of examples exceed the window.
+Truncating the majority of a summarization set whose target describes the whole
+transcript makes the objective ill-posed, not merely hard. It was the intended
+third dev task on length-blind reasoning and was dropped on these numbers.
+
+Dev trio is therefore **FOMC → Py150 → ScienceQA** (Arley approved 3 tasks,
+2026-08-08): classification → code → science QA, all English, all inside the
+window, maximally separated in token distribution given those constraints.
+
+Two consequences for the probe, both worth stating before any number exists:
+
+1. **Truncate prompts from the left, never the answer.** Answer-token NLL is
+   the measurement; an example whose answer was cut is corrupted, not noisy.
+2. **Never average NLL across tasks.** The trio spans 1 answer token (FOMC's
+   single letter) to ~200 (ScienceQA), so a cross-task mean would track
+   whichever task is wordiest and would move when nothing changed. Each task is
+   compared only against its own baseline — which is also what §9 requires for
+   the ternary/float comparison later.
+
+FOMC's one-token answer is a feature: that column is a clean classification
+log-loss, strictly more sensitive than the accuracy phase 0 showed to be a dead
+instrument at this scale.
+
 ## Open items — the live list
 
 Closed:
