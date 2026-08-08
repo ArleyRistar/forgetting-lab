@@ -1,0 +1,18 @@
+# Chain smoke test: exercises supervisor -> harness -> probe -> marker on the
+# real GPU in ~2 minutes. Not an experiment — 2 steps trains nothing. Its job is
+# to catch a broken script before a multi-hour run pays for the same bug.
+run_name: smoke
+model: HuggingFaceTB/SmolLM2-360M
+seed: 0
+mode: lora
+optim: adamw_torch
+
+stages:
+  - {task: FOMC,  max_steps: 2, learning_rate: 2.0e-4}
+  - {task: Py150, max_steps: 2, learning_rate: 2.0e-4}
+
+probe:
+  tasks: all
+  n_eval: 16
+  max_length: 1024
+  batch_size: 4
