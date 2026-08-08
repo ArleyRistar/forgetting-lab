@@ -1,0 +1,28 @@
+# Phase-1a development run: three stages, seed 0, LoRA (spec §6 1a).
+#
+# Task choice is measurement-driven, not name-driven (LAB-NOTES 2026-08-08):
+# classification -> code -> science QA is about as far apart in token
+# distribution and output shape as TRACE gets while staying inside a 360M
+# English model's competence AND inside seq 1024. MeetingBank was the intended
+# third task until profiling showed 58% of its examples exceed the window.
+#
+# Three tasks rather than eight per Arley, 2026-08-08. Widening is a change to
+# this file, not to any code.
+run_name: dev-3stage
+model: HuggingFaceTB/SmolLM2-360M
+seed: 0
+
+# lora | full. Phase 1c needs `full`: ternary QAT has no PEFT escape hatch, so
+# the mode switch exists from day one to avoid a harness rewrite later.
+mode: lora
+optim: adamw_torch
+
+stages:
+  - {task: FOMC,      max_steps: 200, learning_rate: 2.0e-4}
+  - {task: Py150,     max_steps: 200, learning_rate: 2.0e-4}
+  - {task: ScienceQA, max_steps: 200, learning_rate: 2.0e-4}
+
+probe:
+  tasks: all        # every task in `stages` -> a 3x3 matrix over 4 boundaries
+  n_eval: 200       # clamped per task to what exists, and the real count reported
+  max_length: 1024

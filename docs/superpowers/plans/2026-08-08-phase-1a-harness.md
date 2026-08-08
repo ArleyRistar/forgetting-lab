@@ -92,7 +92,7 @@ has gone by the time we need it, every downstream task changes. Find out now.
   clamped to what exists, and the actual count reported — a probe silently
   running on 41 examples where 200 were requested is a number nobody can trust.
 
-- [ ] **Step 1: Download and checksum the archive**
+- [x] **Step 1: Download and checksum the archive**
 
 Write `scripts/fetch_trace.sh` to pull the Drive file (the confirm-token dance
 is needed — it is over Drive's virus-scan threshold), unzip to `data/trace/`,
@@ -105,14 +105,14 @@ scattered third-party HF re-uploads of the constituent tasks. They exist
 with inconsistent schemas and unverified provenance, which would break the
 "one format, one loader" property this task exists to establish.
 
-- [ ] **Step 2: Record the checksum in LAB-NOTES**
+- [x] **Step 2: Record the checksum in LAB-NOTES**
 
 The archive is now the provenance root of every phase-1/2 result. Write the
 sha256, the date fetched, and the task inventory (name → train/eval/test counts)
 into `docs/LAB-NOTES.md`. Copy the zip to a second location on the box so a
 dead link later is an inconvenience, not a lost phase.
 
-- [ ] **Step 3: Write `src/flab/trace.py`**
+- [x] **Step 3: Write `src/flab/trace.py`**
 
 One loader, mirroring `data.py`'s shape so both feel like the same codebase:
 
@@ -136,7 +136,7 @@ for Py150's 13% long tail. Assert in the loader that every formatted example
 retains its full answer, and count how many prompts were truncated so the
 number lands in LAB-NOTES rather than staying invisible.
 
-- [ ] **Step 4: Test and commit**
+- [x] **Step 4: Test and commit**
 
 `tests/test_trace.py`: every task in `TASKS` loads; splits are disjoint;
 formatting round-trips; `n_eval` is honoured. Tests must skip cleanly (not
@@ -164,7 +164,7 @@ git commit -m "feat: TRACE data loader; vendor and checksum the benchmark archiv
 - Consumes: nothing GPU-side. **This whole task is CPU-only and testable
   without the card** — write it while the A/B or any other run occupies the GPU.
 
-- [ ] **Step 1: Config schema**
+- [x] **Step 1: Config schema**
 
 ```yaml
 run_name: dev-3stage
@@ -227,7 +227,7 @@ tasks (spec §9).
 harness rewrite — the ternary recipe is a full fine-tune, and 8-bit Adam is the
 single highest-leverage memory choice available to it (spec §4).
 
-- [ ] **Step 2: Config hash + provenance**
+- [x] **Step 2: Config hash + provenance**
 
 `RunConfig` exposes `content_hash` (sha256 of the canonicalised config). On run
 start, write `run.json` into the run directory: config hash, full config copy,
@@ -235,7 +235,7 @@ start, write `run.json` into the run directory: config hash, full config copy,
 checksum from task 1. That tuple is the spec's "re-runnable from a commit hash"
 deliverable — a result is only as reproducible as its data provenance.
 
-- [ ] **Step 3: Run state**
+- [x] **Step 3: Run state**
 
 ```json
 {"run_name": "...", "config_hash": "...",
@@ -246,7 +246,7 @@ deliverable — a result is only as reproducible as its data provenance.
 Written atomically (temp file + `os.replace`) after every state transition — a
 crash mid-write must not corrupt the file that makes recovery possible.
 
-- [ ] **Step 4: Test and commit**
+- [x] **Step 4: Test and commit**
 
 `tests/test_runstate.py` must cover the failure the design exists for: write
 state, simulate a kill, reload, assert the harness resumes at the first
