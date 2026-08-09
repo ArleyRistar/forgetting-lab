@@ -2128,6 +2128,13 @@ Sizing it on a measured quantity rather than an assumed one: training consumed
 tokens/row** (measured, 400-row sample), so training needed ~**69,400 rows**.
 `SKIP_ROWS = 250_000` is a ~3.6x margin. Raise it if the token budget grows.
 
+The proof rests on one assumption, so it was **checked rather than assumed**:
+two independent processes loading `sample-10BT` with `shuffle(seed=0,
+buffer_size=10_000)` yield the same leading rows (verified 2026-08-09,
+`seed 0 reproducible: True`). Without cross-process reproducibility, skipping
+past training's rows would prove nothing — it would have replaced a false claim
+with an unverified one.
+
 **Also added WikiText-103 test as a second, out-of-distribution held-out set.**
 It cannot overlap the FineWeb-edu stream by construction, and the HF 1.58-bit
 blog reports WikiText perplexity (12.2 for their SmolLM-135M run), so it is the
