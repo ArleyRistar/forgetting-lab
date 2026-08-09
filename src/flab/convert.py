@@ -134,6 +134,9 @@ def main() -> None:
                    help="fraction of the run spent ramping lambda 0->1; the "
                         "recipe uses 1000 of 5000 steps = 0.2")
     p.add_argument("--lr", type=float, default=ConvertConfig.learning_rate)
+    # 8-bit Adam is mandatory at 360M: measured 2026-08-09, fp32 latents with
+    # plain AdamW reserve 98.8% of the card, leaving no headroom at all.
+    p.add_argument("--optim", default="adamw_torch")
     a = p.parse_args()
 
     # Warmup as a fraction of the run, not a fixed step count. The first
@@ -170,7 +173,7 @@ def main() -> None:
             # Microsoft's 1-bit settings: beta2 0.95 (HF defaults 0.999), no
             # weight decay (large wd shrinks latent-weight magnitude and makes
             # ternary weights flip too often), grad clip 1.0 as nanotron.
-            adam_beta2=0.95, weight_decay=0.0, max_grad_norm=1.0,
+            adam_beta2=0.95, weight_decay=0.0, max_grad_norm=1.0, optim=a.optim,
             warmup_steps=100, bf16=torch.cuda.is_available(),
             gradient_checkpointing=torch.cuda.is_available(),
             logging_steps=50, save_steps=cfg.save_steps, save_total_limit=None,
