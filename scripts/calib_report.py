@@ -44,30 +44,75 @@ def load_run(d: Path):
         "name": d.name, "tasks": tasks, "base": base, "bounds": bounds,
         "seed": cfg["seed"], "order": [s["task"] for s in cfg["stages"]],
         "model": cfg["model"].split("/")[-1],
+        # Runs from different measurement regimes must never be pooled: the
+        # flab-style runs used our tags, answer-token KL and full-sequence loss.
+        # Averaging them with replication runs would produce numbers that are
+        # not measurements of anything.
+        "style": cfg.get("prompt_style", "flab"),
+        "kl_scope": cfg.get("kl_scope", "answer_tokens"),
     }
 
 
+def acc_of(task_probe: dict) -> float:
+    """Accuracy to use for CL metrics.
+
+    Prefer `content_acc` — accuracy excluding each example's final answer token.
+    Raw `token_acc` includes the assistant turn terminator, which swings 50
+    points on FOMC purely from answer-length effects between tasks and would
+    make every pooled number a measure of formatting rather than knowledge.
+    Falls back to token_acc only when there is no content to score.
+    """
+    ca = task_probe.get("content_acc")
+    return ca if ca is not None else task_probe["token_acc"]
+
+
+def op_curve(run) -> list[float]:
+    """Their OP: mean accuracy over tasks *seen so far*, per checkpoint."""
+    out = []
+    for k, b in enumerate(run["bounds"]):
+        seen = run["order"][: k + 1]
+        out.append(st.mean(acc_of(b["tasks"][t]) for t in seen if t in b["tasks"]))
+    return out
+
+
 def metrics(run, observable, key):
-    mat = [[b["tasks"][t][key] for t in run["tasks"]] for b in run["bounds"]]
-    base = [run["base"]["tasks"][t][key] for t in run["tasks"]]
+    if key == "content_acc":
+        mat = [[acc_of(b["tasks"][t]) for t in run["tasks"]] for b in run["bounds"]]
+        base = [acc_of(run["base"]["tasks"][t]) for t in run["tasks"]]
+    else:
+        mat = [[b["tasks"][t][key] for t in run["tasks"]] for b in run["bounds"]]
+        base = [run["base"]["tasks"][t][key] for t in run["tasks"]]
     return clmetrics.compute(mat, base, observable)
 
 
 def main() -> None:
-    runs = sorted(filter(None, (load_run(d) for d in Path("outputs/runs").glob("calib-*"))),
-                  key=lambda r: (r["order"][0], r["seed"]))
-    if not runs:
+    globs = list(Path("outputs/runs").glob("calib-*")) + list(Path("outputs/runs").glob("repl-*"))
+    every = sorted(filter(None, (load_run(d) for d in globs)),
+                   key=lambda r: (r["order"][0], r["seed"]))
+    if not every:
         print("no complete calibration runs yet")
         return
 
-    print(f"{len(runs)} complete run(s)\n")
+    want = sys.argv[1] if len(sys.argv) > 1 else "paper"
+    runs = [r for r in every if r["style"] == want]
+    skipped = len(every) - len(runs)
+    if not runs:
+        print(f"no complete runs with prompt_style={want!r} "
+              f"({skipped} run(s) in other regimes, not pooled)")
+        return
+
+    print(f"{len(runs)} complete run(s) with prompt_style={want!r}")
+    if skipped:
+        print(f"  ({skipped} run(s) from other measurement regimes excluded — "
+              "pooling across styles would not measure anything)")
+    print()
     print(f"{'run':<26}{'seed':>5}{'order':>8}"
           f"{'ACC(acc)':>10}{'BWT(acc)':>10}{'ACC(nll)':>10}{'BWT(nll)':>10}{'KL_final':>10}")
     print("-" * 89)
 
     rows, kl_acc_pairs = [], []
     for r in runs:
-        ma = metrics(r, "accuracy", "token_acc")
+        ma = metrics(r, "accuracy", "content_acc")
         mn = metrics(r, "nll", "nll")
         kl_last = r["bounds"][-1].get("stability", {}).get("kl_from_base")  # KL(cur||base), the paper's
         order = "fwd" if r["order"][0] == "FOMC" else "rev"
@@ -88,6 +133,21 @@ def main() -> None:
             return f"{label:<22}{vals[0]:>10.4f}{'  (n=1, no sd)':>16}" if vals else ""
         return (f"{label:<22}{st.mean(vals):>10.4f}  ± {st.stdev(vals):<8.4f}"
                 f"n={len(vals)}")
+
+    # Their OP curve, directly comparable to the paper's table.
+    PAPER_OP = {"Llama-3.2-1B-Instruct": [0.530, 0.647, 0.485],
+                "Qwen3.5-0.8B": [0.533, 0.670, 0.591],
+                "gemma-3-1b-it": [0.547, 0.487, 0.320]}
+    print("\nOP curve (mean content_acc over tasks seen so far) vs the paper")
+    for m in sorted({r_["model"] for r_ in runs}):
+        sel = [op_curve(r_) for r_ in runs if r_["model"] == m and r_["order"][0] == "FOMC"]
+        if not sel:
+            continue
+        ours = [st.mean(x[i] for x in sel) for i in range(len(sel[0]))]
+        theirs = PAPER_OP.get(m)
+        o = "  ".join(f"{v:.3f}" for v in ours)
+        t_ = "  ".join(f"{v:.3f}" for v in theirs) if theirs else "n/a"
+        print(f"  {m:<26} ours {o}   paper {t_}   (n={len(sel)} seed(s))")
 
     print("\nPooled across seeds")
     for order in ("fwd", "rev"):
