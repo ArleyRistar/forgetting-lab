@@ -53,6 +53,14 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
     break
   fi
 
+  # Neither is a provenance failure. Retrying a digest mismatch or an
+  # unverifiable model just repeats the same refusal four times.
+  if grep -qE "pinned digest|cannot verify" "$log"; then
+    echo "!! Model provenance check failed - NOT retrying."
+    grep -hE "pinned digest|cannot verify" "$log" | tail -2
+    break
+  fi
+
   echo "!! attempt $attempt failed with rc=$rc; retrying"
   tail -3 "$log"
   attempt=$((attempt + 1))

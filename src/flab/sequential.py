@@ -78,10 +78,14 @@ def verify_model_digest(cfg: RunConfig) -> str | None:
 def _load_base(cfg: RunConfig):
     from transformers import AutoModelForCausalLM
 
-    verify_model_digest(cfg)
     # transformers 5.x renamed torch_dtype -> dtype (LAB-NOTES quirk 2)
     kwargs = {"dtype": "bfloat16"} if torch.cuda.is_available() else {}
     model = AutoModelForCausalLM.from_pretrained(cfg.model, **kwargs)
+    # Verify AFTER loading, not before: the weights are only in the cache once
+    # something has fetched them, so verifying first passes vacuously for a
+    # model downloaded earlier and hard-fails for a fresh one. Still runs before
+    # any training, which is what the check is actually protecting.
+    verify_model_digest(cfg)
     return model.cuda() if torch.cuda.is_available() else model
 
 
