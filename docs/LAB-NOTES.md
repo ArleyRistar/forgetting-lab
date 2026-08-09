@@ -1880,9 +1880,9 @@ Open:
     which their config disables via `enable_thinking=False` and which our
     renderer passes only when the template accepts the kwarg. Worth checking
     before phase 2 reuses this rendering path.
-16. **Is phase 1c affordable on this box?** The 135M shakedown collapsed to
-    chance at 0.25% of the reference token budget and stayed there. Options and
-    my read are in the 2026-08-09 shakedown entry; the call is Arley's.
+- ~~16. Is phase 1c affordable on this box?~~ — settled 2026-08-09. Shakedown v4
+  reached 5.767 at 135M once latents were fp32, and the 360M arm is running
+  inside the envelope. The blocker was the bf16 rounding bug, not the budget.
 17. **Add distillation from the float teacher to the conversion.** Both recipes
     that succeed at our scale (BitDistill 2510.13998, Ternary Mamba 2606.18114)
     use KD; our three failed shakedowns used plain LM loss. Ternary Mamba
@@ -1894,4 +1894,62 @@ Open:
     strawman. Phase 1b already built the metric.
 20. **Verify the ternary twin's baseline capability before phase 2.** Conversion
     at sub-1B is documented to fail outright; without this check, forgetting and
-    failure-to-convert are confounded.
+    failure-to-convert are confounded. **Raised in priority 2026-08-09** — it is
+    also the gate for item 23, and it is verbatim the one question the community
+    asked of the only 2026 ternary continued-learning release. Run it straight
+    after `conversion_gap.py`, before any phase-2 card.
+
+The next four come from a 2026-08-09 review of the community sweep against the
+spec, plan and code. All three code claims behind them were verified by grep
+before recording: `BitLinear` appears in `bitlinear.py`, `convert.py`,
+`conversion_gap.py` and `mem_probe.py` and **nowhere else**; `eval.sh:8`
+hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
+`requires_grad` nowhere, so the tied embedding is fully plastic.
+
+21. **Make the phase-2 harness BitLinear-aware, with a runtime assert.**
+    Checkpoints hold latent weights deliberately (`convert.py` docstring), so
+    any loader that does not re-apply `bl.convert(..., lambda_=1.0)` scores a
+    **float model and labels it ternary**. `conversion_gap.py:77-84` guards
+    this; `sequential.py`, `probes.py`, `clmetrics.py` and `eval.sh` do not, and
+    `eval.sh` cannot load the twin at all as written. Phase-2 *training* has the
+    same exposure — sequential fine-tuning of the ternary twin must run through
+    BitLinear at λ=1 or it silently fine-tunes a float model. Fix: one shared
+    load path, plus an assertion that effective weights take ≤3 distinct values,
+    run before any number is recorded. This is the same failure class as the
+    turn terminator and teacher forcing — the metric measuring a different
+    object than its name claims — and those cost us a retracted verdict each.
+22. **Decompose flip fraction; raw flips can confirm H1 artefactually.** The
+    absmean scale is per-tensor and recomputed every forward
+    (`bitlinear.py:40-41`), so a shift in mean |w| reclassifies every
+    near-threshold weight in a 921k–3.7M-weight tensor at once. Any fine-tuning
+    moves mean |w|, so raw flip fraction partly measures *amount of training* —
+    which correlates with forgetting trivially. Report scale-driven flips
+    (recomputed holding the stage-start scale frozen) separately from
+    latent-driven ones. If the moving threshold is the mechanism, that is a
+    result; it cannot be folded invisibly into the headline number.
+23. **Instrument and attribution-test the 13.1% float sliver.** The tied
+    embedding *is* the output head, so the ternary model can adapt or forget
+    with zero flips, and STE-noisy gradients in the ternary layers may bias
+    optimisation toward routing adaptation through the clean-gradient float
+    path — a confound correlated with the arm, not random noise. Spec §6 1d
+    instruments flips for the ternary arm and L2 for the float twin, but nothing
+    for the float components *of* the ternary model. Cheapest fix: log
+    embedding/head L2 and KL-to-base per stage as a covariate. Real control:
+    build hybrid checkpoints at each stage boundary (stage-k core + stage-(k−1)
+    embedding, and the reverse) and score both — eval-only, reuses checkpoints
+    we already save, and decomposes each stage's delta into flip-carried vs
+    sliver-carried. Without it, H1's attribution is an assumption.
+24. **Add a background flip-rate null arm.** At 66M tokens the ternary twin
+    enters phase 2 still mid-conversion (loss falling 5.464 → 5.235 over the
+    last 1000 steps) while the float twin sits near its pretrained optimum. Some
+    phase-2 flips will therefore be continued conversion rather than task
+    adaptation. Continue the twin briefly on more FineWeb-edu — no distribution
+    shift — and report task-induced flips over that floor, as the phase-1b null
+    control did for harness noise. This is the strongest reviewer objection to
+    the eventual post, and it is answerable cheaply.
+25. **Pre-empt the 2-bit objection in one paragraph, not an experiment.** The
+    community claim that 2-bit QAT may beat 1.58-bit comes from a 15.5M-param
+    unreproduced experiment, an order of magnitude below our scale; "is ternary
+    the best low-bit point" is out of scope (spec §10). Our contribution is the
+    forgetting mechanism and the data-matched float-twin control, which is
+    bit-width-agnostic in method. Say that once, in the motivation section.
