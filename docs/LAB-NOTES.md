@@ -1657,6 +1657,77 @@ converted model below ~10B tokens at any scale.
 latent trajectory is, and nothing published says that needs billions of tokens
 once the optimizer can actually move the latents.
 
+## 2026-08-09 — ternary conversion WORKS at 135M (shakedown v4, closes the 1c blocker)
+
+`configs`: 2000 steps, seq 1024, effective batch 16 → **32.8M tokens**, 2.18
+GPU-h. λ warmup over 20% (hits 1.0 at step 400), lr 1e-4, **fp32 latent
+weights**, norm always-on, β2 0.95, wd 0, clip 1.0.
+
+### The curve
+
+```
+  50:12.94  100: 8.10  150: 7.35  200: 6.97  250: 6.83  300: 6.73  350: 6.62
+ 400: 6.66 <- lambda = 1.0
+ 450: 6.65  500: 6.49  600: 6.38  700: 6.23  800: 6.19  900: 6.09 1000: 6.11
+1100: 5.99 1200: 5.95 1300: 5.93 1400: 5.86 1500: 5.87 1600: 5.81 1700: 5.85
+1800: 5.75 1900: 5.79 2000: **5.77**
+```
+
+Reference points on the same model: **float (λ=0) 1.84**, **uniform over the
+49152 vocab 10.80**, **untrained at λ=1 15.95**.
+
+### Against the three failures
+
+| | at λ=1 | final |
+| --- | --- | --- |
+| v1 (bf16, no norm) | 11.75 | killed |
+| v2 (bf16, interpolated norm) | 10.59 | 10.74 — flat at chance |
+| v3 (bf16, lr 2e-5) | — | killed; predicted to fail |
+| **v4 (fp32 latents)** | **6.66** | **5.77** |
+
+**v4 barely notices the λ=1 transition** — 6.62 → 6.66 → 6.65 → 6.49 — where v1
+and v2 were destroyed by it. Everything else about v4 was the same recipe.
+
+### What actually fixed it
+
+Latent weights were bf16 with no fp32 master. bf16 carries 8 significant bits
+with round-to-nearest and no stochastic rounding, so an Adam step of magnitude
+≈ lr rounds to **no update at all** for 85.4% of weights at lr 1e-4 and 96.3% at
+2e-5 (measured on this checkpoint, mean |w| = 0.148). The model was freezing
+roughly 24 of every 25 latents per step.
+
+That also resolves the most confusing observation of the day: **lowering the
+learning rate made things worse**, because a smaller step is more likely to
+round away entirely. Every reference keeps an fp32 master — nanotron defaults
+`accumulate_grad_in_fp32: true`.
+
+Two other reversions, both off-recipe choices of mine: the λ-interpolated norm is
+now always-on (as every reference does), and the LR went back **up** to 1e-4
+rather than down.
+
+### The conversion gap, reported not minimised
+
+**5.77 ternary against 1.84 float.** That is a large gap and it is the expected
+outcome at 32.8M tokens against the recipe's 10B — 0.33%. Spec §6 1c asks us to
+*measure and report* it, and §9 has phase 2 compare each twin against **its own**
+post-conversion baseline precisely so an absolute gap cannot confound the
+forgetting comparison.
+
+What matters for the project is not that the ternary model is good — it is that
+it **left chance and acquired a real latent trajectory**, which is what phase 1d
+measures weight-state flips along. That bar is now cleared.
+
+If we later want the gap smaller, the published lever is logit distillation from
+the float teacher (BitDistill 2510.13998; Ternary Mamba 2606.18114 reaches a
+usable ternary model in 102M tokens, inside our budget).
+
+### Cost note for the 360M pair
+
+2.18 GPU-h for 32.8M tokens at 135M → **~15 GPU-h per 100M tokens at 360M**
+scaling by parameters alone, so the 30 GPU-h budget buys roughly 200M tokens for
+the pair, or 100M each. fp32 latents at 360M sit at the VRAM ceiling (16 B/param
+= 5.8 GiB before activations), so the pair needs 8-bit Adam.
+
 ## Open items — the live list
 
 Closed:
