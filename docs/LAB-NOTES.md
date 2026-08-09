@@ -1867,6 +1867,13 @@ Batch **1M tokens**, **100B tokens**, seq 2048. Two things matter here:
   update is orders of magnitude larger and bf16 would not round it away. Our
   result is real but conditional on *bf16 + small batch + lr 1e-4*. Report it as
   an update-survival rate over (dtype × LR), never as "bf16 latents are broken".
+  **But do not let this reframing displace the cause.** One sweep concluded the
+  low LR was "likely the real cause… more than bf16 is". That is wrong for our
+  regime and we have the controlled experiment: we changed **dtype alone**,
+  holding lr at 1e-4, and conversion started working — v4 at 135M and the 360M
+  arm both. LR and dtype interact, and at Microsoft's LR the rounding would not
+  bite; within *our* budget bf16 was the binding constraint. A plausible
+  literature-based reframing does not outrank a measurement we ran.
 - **They use a different LR per arm.** Nielsen et al. (below) explicitly use the
   *same* LR for both. So "same LR for both twins" is a defensible choice with a
   citation, but it is a choice, and it must be stated — otherwise a reviewer says
