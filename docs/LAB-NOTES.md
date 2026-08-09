@@ -1780,6 +1780,52 @@ margin when the real job streams its data.
 
 Every row in the §4 table is now measured rather than computed.
 
+## 2026-08-09 — 86.9% of SmolLM2-360M is ternarised (a failure mode we avoided)
+
+A community sweep (r/LocalLLM and r/LocalLLaMA, via Wayback — Reddit blocks
+direct access) turned up a hobbyist ternary run that failed for a reason worth
+checking ourselves: at 4.3M params with a 50k vocab and `d_model=256`, **86% of
+its training compute went to the softmax projection** and only 14% reached the
+ternary core. Their fix was cutting the vocab to 10k and tying embeddings. A
+"ternary model" can be mostly float, and the loss curve would not say so.
+
+Measured on our checkpoint (CPU census, not arithmetic):
+
+| component | params | share |
+| --- | ---: | ---: |
+| BitLinear weights (224 layers) | 314.6M | **86.9%** |
+| embedding, tied with `lm_head` | 47.2M | 13.1% |
+| total unique | 361.8M | |
+
+`tie_word_embeddings = True`, so the head and embedding are one tensor counted
+once — the 47.2M is not paid twice. Our ratio is the inverse of theirs because
+`d_model=960` across 32 layers dwarfs a 49k vocab. **No action needed**, but the
+number is now on record: when we report a forgetting result for "the ternary
+model", 13.1% of it is float, and that fraction would grow at smaller scale.
+
+Two claims from the same sweep worth pre-empting rather than discovering later:
+
+1. **A QAT BitLinear is supposed to be slower and heavier than `nn.Linear`
+   during training.** The most-cited "train BitNet from scratch" repo was
+   publicly called out for a BitLinear that still dispatches to `F.linear` in
+   bf16 — a fake. Ours has the same property by design (quantise in forward,
+   float matmul, STE backward); the speedup lives in inference kernels we are
+   not building. This is the honest answer when someone asks why conversion is
+   not faster, and it is not a bug.
+2. **"2-bit QAT might be better than 1.58-bit at small scale"** — an early
+   experiment at 15.5M params found the gap to fp16 large enough to say so. Our
+   135M and 360M runs sit above that scale, but the objection lands directly on
+   phase 1c's absolute numbers and should be answered, not ignored.
+
+Context for the eventual write-up: nothing in the archived record covers
+catastrophic forgetting in low-bit models, no BitNet training hyperparameters
+appear anywhere, and every 2026 ternary tool named is inference-only. The one
+2026 ternary release with a continued-learning feature (deepgrove's
+Maple-Preview, 20B) drew exactly our question in its top comment — "how much
+does it degrade base performance?" — and it went unanswered. Caveat: these are
+anonymous posts without reproduced numbers, and Wayback only indexes what it
+crawled, so absence means absent from the reachable archive.
+
 ## Open items — the live list
 
 Closed:
