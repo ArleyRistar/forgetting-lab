@@ -269,3 +269,26 @@ def test_kl_pair_is_zero_for_identical_distributions():
     assert kl_f.item() == pytest.approx(0.0, abs=1e-7)
     assert kl_r.item() == pytest.approx(0.0, abs=1e-7)
     assert dh.item() == pytest.approx(0.0, abs=1e-7)
+
+
+def test_content_accuracy_excludes_the_final_answer_token(tiny):
+    """Paper-style labels cover everything after the prompt, including the
+    assistant turn terminator. That token is trivially predictable and dilutes
+    token accuracy: FOMC scored 0.765 over 2 tokens/example where the letter
+    alone was 0.53 — exactly 2606.27634's reported 0.530. content_acc is the
+    number their OP actually is."""
+    model, tok = tiny
+    r = probes.probe_task(model, tok, "FOMC", n_eval=4, max_length=256,
+                          prompt_style="flab")
+    # FOMC answers are a single token in flab style, so excluding the last one
+    # leaves nothing to score. None is the honest answer — returning token_acc
+    # unchanged would quietly claim a content measurement that does not exist.
+    assert r.n_tokens > 0
+    assert r.content_acc is None
+
+
+def test_content_accuracy_present_on_multi_token_answers(tiny):
+    model, tok = tiny
+    r = probes.probe_task(model, tok, "ScienceQA", n_eval=4, max_length=512,
+                          prompt_style="flab")
+    assert r.content_acc is not None and 0.0 <= r.content_acc <= 1.0

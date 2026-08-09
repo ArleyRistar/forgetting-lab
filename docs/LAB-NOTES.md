@@ -1104,6 +1104,103 @@ enough to check the harness against published numbers, then run phase 2 in our
 own configuration having established the harness is sound. What is being
 validated is the harness, not the prompt format.
 
+## 2026-08-09 — replication mode: accuracy replicates; an apparent 50-point collapse was the turn terminator
+
+Phase-1b task 6, one run (`repl-llama-s33`, Llama 3.2 1B Instruct, their seed 33)
+after rebuilding the harness to match 2606.27634's published implementation.
+
+### Result table
+
+| boundary | KL (ours) | KL (paper) | FOMC | ScienceQA | NumGLUE-cm |
+| --- | --- | --- | --- | --- | --- |
+| baseline | 0.0000 | — | 1.801 / 0.500 | 1.756 / 0.607 | 12.616 / 0.034 |
+| after FOMC | 0.6849 | 0.199 | 0.518 / **0.765** | 1.783 / 0.606 | 11.336 / 0.028 |
+| after ScienceQA | 0.7766 | 0.258 | 1.928 / **0.265** | 1.332 / 0.674 | 8.563 / 0.040 |
+| after NumGLUE-cm | 3.3747 | 0.630 | 0.570 / **0.765** | 1.354 / 0.663 | 1.814 / 0.591 |
+
+Cells are NLL / token accuracy; n = 100 / 97 / 81 on `test.json`.
+
+### The finding: a 50-point "collapse" that was not forgetting
+
+FOMC token accuracy runs **0.765 → 0.265 → 0.765**. Accuracy that halves and
+then *fully recovers* cannot be forgetting — nothing restores destroyed
+knowledge. The token counts settle it. FOMC scores 2 tokens per example under
+paper-style labels (the answer letter and `<|eot_id|>`), so out of 200:
+
+| boundary | correct | letters | terminators |
+| --- | --- | --- | --- |
+| after FOMC | 153 | **53** | ~100 |
+| after ScienceQA | 53 | **53** | ~0 |
+| after NumGLUE-cm | 153 | **53** | ~100 |
+
+**Letter accuracy is constant at 53. The entire 50-point swing is the turn
+terminator**, twice. ScienceQA's answers average 216 tokens and teach the model
+to keep generating, so it stops predicting `<|eot_id|>` after a bare letter;
+NumGLUE-cm's average 2.2 tokens and restore the habit.
+
+FOMC's task knowledge never moved. The metric moved 50 points in each direction.
+
+**Why this matters beyond the replication.** Sequential fine-tuning across tasks
+with different answer lengths will *systematically* produce terminator collapse,
+and any metric that scores the terminator reads it as catastrophic forgetting.
+Their generative exact-match is largely immune — a model that answers "B" and
+then rambles still normalises to "B". We were manufacturing forgetting they
+would never see.
+
+`content_acc` (accuracy excluding each example's final answer token) was added
+for this and is the number their OP actually is. It returns `None` rather than a
+substitute when the answer is a single token and excluding the terminator leaves
+nothing to score — same discipline as the probe's `warning` field.
+
+### Accuracy replicates
+
+Stripping terminators: FOMC **0.53**, ScienceQA 0.663 (216 tokens/answer, so
+dilution is negligible), NumGLUE-cm ~0.284 (104 of 176 correct, less 81
+terminators, over 81 examples). Mean **≈0.49 against their final OP of 0.485**.
+Per-stage, our FOMC 0.53 matches their post-FOMC OP of **0.530** to three
+significant figures.
+
+So the harness, given their protocol, trains their model to their reported
+performance. That is what the calibration gate was for.
+
+### What it took to get there, and how each was caught
+
+| gap | ours before | how found |
+| --- | --- | --- |
+| KL direction `KL(base‖cur)` not `KL(cur‖base)` | — | reading their definition after our numbers came out 5–25× low |
+| **KL scope**: ~300 answer tokens vs **one next-token position** | 0.0056 | their code; the single biggest factor |
+| **completion-only loss**: we trained on prompt tokens too | 1.1205 → 0.6849 | *overshoot* — after fixing scope we were 5.6× too high, with entropy and margin moving far more than theirs |
+| prompt style: our tags vs their chat template + task prompts | FOMC acc 0.000 → 0.500 at baseline | their code |
+| scoring the turn terminator | 0.765 vs 0.53 | the impossible negative in a hand calculation |
+
+The overshoot one is worth remembering as a method: **being wrong in the
+opposite direction after a fix is diagnostic**, and it pointed at the objective
+rather than the measurement before I had read the relevant file.
+
+### Still open: KL is 5.4× high
+
+Final KL 3.375 against their 0.630. This is now an isolated discrepancy on one
+metric rather than a systematic difference — accuracy lands on their number, so
+it is *not* that our training is more aggressive. Remaining candidates: the
+specific rows drawn into the 20% reference carve (same composition, different
+examples), or their KL being computed at a checkpoint we are not matching.
+Unresolved; do not claim the KL replicates.
+
+### Consequence for phase 1a's numbers
+
+Phase 1a trained with **full-sequence loss**, not completion-only — every token
+including the prompt. That is a legitimate choice but is not standard SFT, and it
+drives more drift than completion-only does. The 1a shakedown's forgetting
+magnitudes are real but reflect a more aggressive objective than the literature
+default. `train.completion_only` is now a hashed config field defaulting to the
+old behaviour, so nothing already recorded is silently invalidated; phase 2
+should choose deliberately rather than inherit.
+
+Also found: **Llama's chat template injects today's date** into an automatic
+system block, so the rendered prompt — and every number from it — changes daily
+unless pinned. That silently breaks "re-runnable from a commit hash". Now pinned
+to a fixed date; their implementation has the same exposure.
+
 ## Open items — the live list
 
 Closed:
@@ -1146,3 +1243,10 @@ Open:
     two different versions. Hit on 2026-08-09 fixing the KL direction; handled
     by deleting the run dirs. `run.json` already records `git_commit` — the
     cheap fix is for resume to warn (not refuse) when it differs.
+12. **KL is 5.4× above the paper's** after replication mode closed every other
+    gap (3.375 vs 0.630 final, Llama). Accuracy matches, so it is not training
+    intensity. Suspects: which rows land in the 20% reference carve, or a
+    checkpoint-definition mismatch. Do not claim the KL replicates until settled.
+13. **Decide `completion_only` for phase 2.** Phase 1a used full-sequence loss;
+    the literature default and 2606.27634 both mask the prompt. It changes how
+    much a stage drifts, so it changes every forgetting number.

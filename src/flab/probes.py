@@ -43,6 +43,12 @@ class TaskProbe:
     task: str
     nll: float | None          # mean per-token NLL over answer tokens
     token_acc: float | None
+    # Accuracy excluding each example's final answer token. Under `paper` style
+    # the labels cover everything after the prompt, which includes the assistant
+    # turn terminator — trivially predictable, and it dilutes the metric badly:
+    # FOMC scored 0.765 over 2 tokens/example where the letter alone was 0.53,
+    # exactly 2606.27634's reported 0.530. This is the number their OP is.
+    content_acc: float | None
     n_tokens: int
     n_examples: int
     n_prompt_truncated: int
@@ -181,7 +187,8 @@ def probe_task(
         encoded.append((ids, labels))
 
     if not encoded:
-        return TaskProbe(task, None, None, 0, 0, n_trunc, n_dropped, time.perf_counter() - t0,
+        return TaskProbe(task, None, None, None, 0, 0, n_trunc, n_dropped,
+                         time.perf_counter() - t0,
                          "no example survived encoding; nothing was measured")
 
     # Length-sorted batching: pure padding saving, and order-independent since
@@ -193,6 +200,7 @@ def probe_task(
     model.eval()
 
     nll_sum, correct, n_tokens = 0.0, 0, 0
+    content_correct, n_content = 0, 0
     for i in range(0, len(encoded), batch_size):
         chunk = encoded[i : i + batch_size]
         # Round the width up to a bucket. Length-sorted batching otherwise
@@ -204,12 +212,18 @@ def probe_task(
         input_ids = torch.full((len(chunk), width), pad, dtype=torch.long)
         labels = torch.full((len(chunk), width), IGNORE, dtype=torch.long)
         attn = torch.zeros((len(chunk), width), dtype=torch.long)
+        content = torch.full((len(chunk), width), IGNORE, dtype=torch.long)
         for r, (ids, lab) in enumerate(chunk):
             input_ids[r, : len(ids)] = torch.tensor(ids)
             labels[r, : len(lab)] = torch.tensor(lab)
             attn[r, : len(ids)] = 1
+            # Same labels minus each example's final answer token.
+            scored = [i for i, v in enumerate(lab) if v != IGNORE]
+            for i in scored[:-1]:
+                content[r, i] = lab[i]
 
         input_ids, labels, attn = input_ids.to(device), labels.to(device), attn.to(device)
+        content = content.to(device)
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
             logits = model(input_ids=input_ids, attention_mask=attn).logits
 
@@ -228,6 +242,12 @@ def probe_task(
         correct += (flat_logits.argmax(-1) == flat_labels).sum().item()
         n_tokens += int(mask.sum())
 
+        cmask = content[:, 1:] != IGNORE
+        if cmask.any():
+            cl = logits[:, :-1, :][cmask].float()
+            content_correct += (cl.argmax(-1) == content[:, 1:][cmask]).sum().item()
+            n_content += int(cmask.sum())
+
     if was_training:
         model.train()
 
@@ -244,6 +264,7 @@ def probe_task(
         task=task,
         nll=(nll_sum / n_tokens) if n_tokens else None,
         token_acc=(correct / n_tokens) if n_tokens else None,
+        content_acc=(content_correct / n_content) if n_content else None,
         n_tokens=n_tokens,
         n_examples=len(encoded),
         n_prompt_truncated=n_trunc,
