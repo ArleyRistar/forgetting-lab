@@ -877,6 +877,98 @@ that was comfortable at 49152 may not be at 128256 — and `probe.batch_size` is
 in the config hash precisely because changing it changes the numbers. Expect to
 set it deliberately for this model rather than inherit 4.
 
+## 2026-08-09 — synthetic controls: a gate-design error, and a clean noise floor
+
+Phase-1b task 5. Three runs on SmolLM2-360M, LoRA r=16, 400 steps/stage at
+lr 5e-4, 50 nonsense keys mapped to one of 8 single-token values. That value set
+puts an **analytic scale** on the NLL rather than a relative one:
+
+| NLL | meaning |
+| --- | --- |
+| ~0 | perfect recall |
+| **log(8) = 2.0794** | chance — the association is gone |
+| ≫ 2.0794 | *confidently wrong* — a conflicting value was learned instead |
+
+### Results
+
+| arm | A memorised | A after stage B | forgetting |
+| --- | --- | --- | --- |
+| **conflict** (same keys, different values) | 0.0005 / 1.000 | 12.5178 / 0.000 | **+12.5173 NLL, −1.000 acc** |
+| **disjoint** (no shared keys) | 0.0005 / 1.000 | 3.0861 / 0.340 | **+3.0855 NLL, −0.660 acc** |
+| **null** (lr 1e-12, weights frozen) | 0.000744 / 1.000 | 0.000744 / 1.000 | **+0.000000** |
+
+**Conflict behaves exactly as the logic demands.** A ends at NLL 12.52 — far
+*above* chance — with accuracy 0.000, far *below* it. The model is not confused
+about task A; it is confidently wrong, because it was taught a different value
+for those same keys. The symmetry holds too: at the after-A boundary, task B
+already sat at NLL 16.35 / acc 0.000, confidently wrong before ever being seen.
+
+### The gate design was wrong, and it nearly cost us a real result
+
+The disjoint arm was specified as the noise floor, on the reasoning that with no
+shared keys "nothing forces interference, so zero forgetting is the analytically
+known answer". **That reasoning conflates two different claims.** "A model with
+spare capacity *can* hold both" is a statement about what is possible. It is not
+a prediction about what SGD *does*. 400 steps at 5e-4 overwrite the adapter
+weights encoding task A whether or not task B's keys collide with it.
+
+So +3.0855 is not an artefact — it is **genuine catastrophic forgetting**, the
+phenomenon this project exists to measure. The disjoint arm cannot separate
+"the harness invents forgetting" from "forgetting really happened", because both
+produce the same reading.
+
+Consequence, had this gone unnoticed: phase 2 would have inherited a noise floor
+of **+3.09 NLL** and discarded every real effect beneath it. That is larger than
+most effects phase 2 is likely to find.
+
+### The control that actually isolates the artefact
+
+Run the *identical* structure — same task, same 400 steps, same
+checkpoint/save/reload/re-probe cycle — at **lr 1e-12**, so total parameter
+movement over the stage is ~1e-9 and no representable weight update occurs. Any
+forgetting measured is then artefact by construction.
+
+**Result: 0.000000, bit-identical to six decimals.** Task B's NLL is unchanged
+too (7.869061 at both boundaries), confirming nothing moved in either direction
+rather than moving and cancelling.
+
+So:
+
+- **The harness contributes nothing measurable.** Phase 2's forgetting noise
+  floor is ~0; resolution is limited by seed variance, not by instrumentation.
+- **Disjoint's +3.0855 is entirely real.** Learning 50 unrelated facts destroyed
+  66% of 50 perfectly-memorised ones, with zero key overlap.
+- The 2026-08-08 finding that the probe is bit-exact at fixed batch size is now
+  confirmed **end-to-end through train/save/reload**, not just probe-to-probe.
+
+### A discarded first attempt, and why
+
+The first run used 100 steps at lr 2e-4 and produced a superficially perfect
+result: conflict forgot +0.7213 NLL, disjoint +0.0892, an 8× separation in the
+right direction. It was discarded because the **premise failed** — after its own
+training stage, conflict task A sat at accuracy 0.300 and disjoint at 0.200,
+against 0.125 chance and 1.000 for memorisation. Neither arm had learned the
+associations; the NLL drop from ~6.5 to ~2.08 was the model learning the output
+*format* ("answer with one letter"), not the key→value mapping.
+
+Measuring how much a harness degrades a model that never learned anything is not
+a noise floor. Worth stating plainly because the numbers looked like a pass —
+**an 8× separation in the predicted direction, from a broken premise.**
+
+### Incidental: negative forward transfer with no shared keys
+
+In the disjoint arm, task B sat at NLL 7.39 / acc 0.080 after stage A, *worse*
+than its 6.55 baseline, despite sharing no keys. Training on A makes the model
+worse at unseen keys — presumably it now confidently pattern-matches them onto
+memorised ones. Not what the gate turns on, but it is the same effect the 1a
+shakedown saw on ScienceQA and is worth watching in phase 2.
+
+### Gate verdict
+
+- **Sees forgetting that is provably present:** PASS (conflict, +12.52).
+- **Does not invent forgetting:** PASS (null, 0.000000) — and note this is the
+  question the disjoint arm was *supposed* to answer and could not.
+
 ## Open items — the live list
 
 Closed:
@@ -908,3 +1000,8 @@ Open:
 9. **Which forgetting normalisation?** Absolute NLL delta and percent-of-own-gain
    disagreed about the recency gradient's strength in the shakedown (6.6x vs
    1.2x). Decide before phase 2 reports an effect size, and report both.
+10. **Re-examine the 1a shakedown's magnitudes now the floor is ~0.** Phase 1a
+    reported +0.694 and +0.105 NLL forgetting with no artefact estimate. The null
+    control says the harness adds nothing, so those are real — but they were
+    one seed, and seed variance is now the binding constraint rather than
+    instrumentation.

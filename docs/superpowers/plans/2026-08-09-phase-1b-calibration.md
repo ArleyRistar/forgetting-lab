@@ -218,7 +218,7 @@ work: the replication says "we agree with the literature", the control says
 **Files:** add `src/flab/synthetic.py`, `tests/test_synthetic.py`,
 `configs/synthetic-control.yaml`.
 
-- [ ] **Step 1: Two paired synthetic tasks**
+- [x] **Step 1: Two paired synthetic tasks**
 
 Generate key→value associations over nonsense tokens:
 
@@ -231,7 +231,7 @@ Generate key→value associations over nonsense tokens:
   Nothing forces interference; a model with sufficient capacity can hold both.
   **Zero forgetting is the analytically known answer.**
 
-- [ ] **Step 2: The gate**
+- [x] **Step 2: The gate**
 
 The instrument passes if it reports large forgetting on the conflicting pair and
 near-zero on the disjoint pair. Failing the first means the probe cannot see
@@ -239,7 +239,7 @@ forgetting that is *provably* present. Failing the second is worse — it means
 the harness manufactures forgetting that logic says need not occur, and every
 number in phase 2 would be suspect.
 
-- [ ] **Step 3: Report the gap, not just the two numbers**
+- [x] **Step 3: Report the gap, not just the two numbers**
 
 The disjoint arm's non-zero residual is the harness's **noise floor for
 forgetting**. Phase 2 must not report effects smaller than it. This number does

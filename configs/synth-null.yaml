@@ -1,0 +1,35 @@
+# Null control: the harness runs, the weights do not move (phase-1b task 5).
+#
+# The disjoint arm was meant to be the noise floor and is not: it measures real
+# catastrophic forgetting, because "a model with spare capacity CAN hold both"
+# is a claim about what is possible, not about what SGD does. 400 steps at
+# 5e-4 overwrite the adapter whether or not the keys collide.
+#
+# This isolates what disjoint cannot. Stage A memorises normally; stage B is
+# structurally identical to disjoint's stage B - same task, same step count,
+# same checkpoint/save/reload/re-probe cycle - but at a learning rate so small
+# that no representable weight update occurs. Any forgetting measured here is
+# therefore pure harness artefact, and THAT is the number phase 2 needs.
+#
+# Expected: exactly 0.0000. Anything else is a bug worth finding.
+run_name: synth-null
+model: HuggingFaceTB/SmolLM2-360M
+seed: 0
+mode: lora
+optim: adamw_torch
+
+stages:
+  - {task: synth-disjoint-a, max_steps: 400, learning_rate: 5.0e-4}
+  - {task: synth-disjoint-b, max_steps: 400, learning_rate: 1.0e-12}
+
+train:
+  batch_size: 4
+  grad_accum: 4
+  max_length: 128
+
+probe:
+  tasks: all
+  n_eval: 50
+  max_length: 128
+  batch_size: 4
+  reference_n: 0
