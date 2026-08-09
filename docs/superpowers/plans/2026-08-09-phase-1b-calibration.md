@@ -180,13 +180,13 @@ it is noise. Cheap, decisive, and easy to skip.
 
 **Files:** add `src/flab/clmetrics.py`; extend `scripts/loss_matrix.py`.
 
-- [ ] **Step 1: Implement ACC, BWT, FWT over the existing matrix**
+- [x] **Step 1: Implement ACC, BWT, FWT over the existing matrix**
 
 BWT is `a_k,j − a_j,j` — final performance on task *j* minus performance right
 after learning *j*. Our loss matrix already contains exactly this structure; it
 has simply been read as NLL rather than accuracy.
 
-- [ ] **Step 2: Compute them on BOTH accuracy and NLL, and report both**
+- [x] **Step 2: Compute them on BOTH accuracy and NLL, and report both**
 
 Here is the tension worth stating plainly. The paper's metrics are
 **accuracy-based**. Phase 0 and the 1a shakedown both found accuracy to be a
@@ -200,7 +200,7 @@ them as a finding rather than a nuisance** — a systematic divergence would
 itself be worth writing up, since it would say published accuracy-based CL
 metrics understate forgetting at small scale.
 
-- [ ] **Step 3: Reproduce the KL–accuracy correlation**
+- [x] **Step 3: Reproduce the KL–accuracy correlation**
 
 Their central quantitative claim is **r = −0.497, p < 0.001** between KL drift
 and accuracy. Compute the same correlation over our boundaries. Matching the

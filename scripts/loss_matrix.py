@@ -24,6 +24,11 @@ import json
 import sys
 from pathlib import Path
 
+# clmetrics is stdlib-only by design (scipy is an optional import inside it), so
+# this stays runnable under system python3 while a run is using .venv.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from flab import clmetrics  # noqa: E402
+
 
 def load(run_dir: Path) -> tuple[list[str], list[tuple[str, dict]]]:
     state = json.loads((run_dir / "runstate.json").read_text())
@@ -75,6 +80,55 @@ def main() -> None:
             print(f"  {lab}: {w}")
     else:
         print("\nNo probe warnings: every boundary measured what it claims.")
+
+    # -- continual-learning metrics, on BOTH observables ------------------
+    stages = rows[1:]
+    if len(stages) == len(tasks) >= 1:
+        print("\nContinual-learning metrics (higher score = better; "
+              "negative BWT = forgetting)")
+        print(f"{'observable':<14}{'ACC':>10}{'BWT':>10}{'FWT':>10}")
+        print("-" * 44)
+        out = {}
+        for obs, key in (("accuracy", "token_acc"), ("nll", "nll")):
+            mat = [[d["tasks"][t][key] for t in tasks] for _, d in stages]
+            base = [rows[0][1]["tasks"][t][key] for t in tasks]
+            m = clmetrics.compute(mat, base, obs)
+            out[obs] = m
+            print(f"{obs:<14}{m.acc:>10.4f}{m.bwt:>10.4f}{m.fwt:>10.4f}")
+
+        # The paper's metrics are accuracy-based; phase 0 and the 1a shakedown
+        # both found accuracy a poor instrument at this scale. A systematic
+        # disagreement here is a finding, not a nuisance.
+        a, n = out["accuracy"], out["nll"]
+        if (a.bwt < 0) != (n.bwt < 0):
+            print("\n  *** OBSERVABLES DISAGREE ON THE SIGN OF BWT ***")
+            print("  accuracy and NLL point opposite ways about whether forgetting")
+            print("  happened at all. That is a result to write up, not to average.")
+        elif abs(a.bwt) < 0.1 * abs(n.bwt):
+            print("\n  NOTE: accuracy-BWT is <10% the magnitude of NLL-BWT — the")
+            print("  accuracy metric is understating forgetting, as at ScienceQA")
+            print("  in the 1a shakedown (NLL +0.110, accuracy 0.620 -> 0.621).")
+
+    # -- drift, and the paper's central correlation -----------------------
+    kls = [(lab, d["stability"]["kl_from_base"]) for lab, d in rows
+           if d.get("stability", {}).get("kl_from_base") is not None]
+    if kls:
+        print("\nReference-set drift (KL from base, nats/token)")
+        for lab, kl in kls:
+            flag = "  <- above the paper's ~0.8 instability threshold" if kl > 0.8 else ""
+            print(f"  {lab:<18}{kl:>9.4f}{flag}")
+
+        # Look the row up by label rather than zipping two filtered lists: a
+        # misalignment there would silently correlate the wrong pairs.
+        by_label = {lab: d for lab, d in rows}
+        paired = [(kl, sum(by_label[lab]["tasks"][t]["token_acc"] for t in tasks) / len(tasks))
+                  for lab, kl in kls]
+        if len(paired) >= 3:
+            r, p, n = clmetrics.pearson([x for x, _ in paired], [y for _, y in paired])
+            ps = "n/a" if p is None else f"{p:.4f}"
+            print(f"\n  KL vs mean accuracy: r={r:+.3f}  p={ps}  n={n}")
+            print("  (paper: r=-0.497, p<0.001 — sign and rough magnitude is the")
+            print("   gate; n is tiny in one run, so pool seeds before trusting p)")
 
     total = sum(d.get("seconds_total", 0) for _, d in rows)
     print(f"\n{len(rows)} boundaries, {total:.1f} s of probing in total.")
