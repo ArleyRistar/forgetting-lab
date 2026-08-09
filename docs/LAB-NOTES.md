@@ -2100,6 +2100,46 @@ a failure mode of its own: never shipping. **Next after 1c closes is phase 1d
 hypothesis, and the one measurement the whole sweep confirmed nobody has made.
 Items 21-30 get pulled in only where they are load-bearing for *that* number.
 
+## 2026-08-09 — the "held-out" set was not proven held out (caught before it mattered)
+
+`conversion_gap.py` drew its held-out blocks with `shuffle(seed=999)` against
+training's `seed=0` and its docstring asserted that this made the split
+"disjoint from what either twin saw". **That was false.** A buffered shuffle
+permutes row order and shard order; it does not partition a corpus. Both streams
+draw from the same `sample-10BT`, so held-out blocks could be blocks training had
+already trained on, and the word "held-out" would have gone into the blog post
+unearned.
+
+This is the fourth instance of the project's recurring failure shape — *the
+instrument silently measuring a different object than its name claims* (KL
+direction, turn terminator, teacher forcing, and a test that asserted the block
+has norms while the layer did not use them). It was caught by review before any
+number was recorded, which is the first time this class has been caught *ahead*
+of a result rather than after retracting one.
+
+**Fix: make disjointness structural.** Use the *same* seed-0 stream training
+used — reproducing its exact block order — and `.skip()` past everything it
+consumed. The generator is deterministic and single-process, so every block after
+the skip is provably unseen. A different seed would only have reshuffled the same
+corpus, which is what caused the problem.
+
+Sizing it on a measured quantity rather than an assumed one: training consumed
+4000 x 16 = 64,000 blocks = 65.5M tokens, and FineWeb-edu averages **944.35
+tokens/row** (measured, 400-row sample), so training needed ~**69,400 rows**.
+`SKIP_ROWS = 250_000` is a ~3.6x margin. Raise it if the token budget grows.
+
+**Also added WikiText-103 test as a second, out-of-distribution held-out set.**
+It cannot overlap the FineWeb-edu stream by construction, and the HF 1.58-bit
+blog reports WikiText perplexity (12.2 for their SmolLM-135M run), so it is the
+number that makes us comparable to the closest published work. The script now
+loads each model once and scores it on both corpora.
+
+Note what the bug would and would not have broken: contamination would have
+flattered both twins equally against the base model, so
+`gap_ternary_vs_float_twin` — the number that matters, since both twins saw
+identical tokens — would still have been fair. The damage was to the
+*base*-model comparisons and to the honesty of the word "held-out".
+
 ## Open items — the live list
 
 Closed:
