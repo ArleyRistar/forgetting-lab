@@ -1765,7 +1765,18 @@ The 8-bit row is higher than estimated for the reason already recorded on
 
 fp32 latents with plain AdamW is **98.8% of the card** — no headroom for a longer
 sequence, a bigger batch, or a concurrent probe. **8-bit Adam is not optional at
-360M**, and at 71% it leaves room to work in.
+360M.**
+
+**Correction, from the real run (2026-08-09):** the probe said 8-bit Adam would
+sit at 71% (5572 MiB reserved). The actual 4000-step conversion runs at **7303
+MiB, 93% of the card** — 1.7 GiB more than predicted. The probe runs 12 steps
+against a pre-materialised dataset; the real job additionally holds the
+streaming tokeniser's buffers and a longer allocator history. So the probe is a
+good *lower bound* on a configuration's cost and a poor estimate of headroom.
+
+Nothing failed — but "29% spare" was wrong and "7% spare" is the number. A
+probe-derived headroom figure should be treated as optimistic by roughly this
+margin when the real job streams its data.
 
 Every row in the §4 table is now measured rather than computed.
 
