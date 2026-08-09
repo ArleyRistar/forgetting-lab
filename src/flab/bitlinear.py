@@ -21,6 +21,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+_FUSED_RMS = hasattr(F, "rms_norm")
+
 # Linear submodules replaced in a Llama-style block. Embeddings, lm_head and
 # norms are deliberately excluded — the recipe quantises attention and FFN only.
 TARGET_SUFFIXES = ("q_proj", "k_proj", "v_proj", "o_proj",
@@ -62,6 +64,12 @@ def rms_norm(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     initialised parameters, breaking both the unchanged-parameter-count
     invariant and the premise that the float weights are the initial latents.
     """
+    # F.rms_norm is a single fused kernel; the hand-rolled version is four
+    # (pow, mean, rsqrt, mul) plus an fp32 up/down cast, and with 210 BitLinears
+    # per forward that launch overhead measured as a ~3x step-time regression on
+    # the first normed shakedown.
+    if _FUSED_RMS:
+        return F.rms_norm(x, (x.shape[-1],), None, eps)
     dtype = x.dtype
     x32 = x.float()
     x32 = x32 * torch.rsqrt(x32.pow(2).mean(dim=-1, keepdim=True) + eps)
