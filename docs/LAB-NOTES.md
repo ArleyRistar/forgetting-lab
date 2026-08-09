@@ -2228,6 +2228,30 @@ before recording: `BitLinear` appears in `bitlinear.py`, `convert.py`,
 hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
 `requires_grad` nowhere, so the tied embedding is fully plastic.
 
+- ~~21. Make the phase-2 harness BitLinear-aware, with a runtime assert.~~ —
+  **BUILT 2026-08-09**, before any phase-2 number exists, which was the review's
+  stated test of whether this project's error-catching has become preventive
+  rather than reactive. `src/flab/loading.py` is now the only supported way to
+  load a twin: `load_converted()` re-applies BitLinear at λ=1 when
+  `is_ternary_checkpoint()` says so, then `assert_ternary()` verifies the
+  *effective* weights take ≤3 distinct values and that every λ is exactly 1.
+  Detection keys on the run's own `convert.json` (searched in the checkpoint dir
+  and its parent, since weights live in `final/`), **not** on the directory name
+  — a path called `ternary-360m` proves nothing. A ternary run whose warmup never
+  completed raises rather than loading quietly, because its weights are not
+  ternary whatever it is called. `conversion_gap.py` now goes through this path
+  and exits if the ternary arm comes back with zero BitLinears. 11 tests in
+  `tests/test_loading.py`, including the vacuous-pass case (a float model
+  trivially satisfies "all BitLinears are ternary", so callers must check the
+  count, not the absence of an exception) and a sabotaged quantiser. Verified
+  end-to-end on the real checkpoint: 224 layers, guard passed.
+
+  Still to do when phase 2 is written: route `sequential.py`, `probes.py`,
+  `clmetrics.py` and `eval.sh` through it — the module exists, the callers do not
+  yet use it. `eval.sh:8` additionally hardcodes
+  `pretrained=HuggingFaceTB/SmolLM2-360M` and cannot load a twin at all.
+
+  Original item, for the record:
 21. **Make the phase-2 harness BitLinear-aware, with a runtime assert.**
     Checkpoints hold latent weights deliberately (`convert.py` docstring), so
     any loader that does not re-apply `bl.convert(..., lambda_=1.0)` scores a
@@ -2249,7 +2273,9 @@ hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
     (recomputed holding the stage-start scale frozen) separately from
     latent-driven ones. If the moving threshold is the mechanism, that is a
     result; it cannot be folded invisibly into the headline number.
-23. **Instrument and attribution-test the 13.1% float sliver.** The tied
+23. **[SPLIT] Log the float-sliver covariate now; DEFER the attribution
+    experiment** until H1 shows signal — the hybrid-checkpoint swap is eval-only
+    over checkpoints we already save, so it can run post hoc. The tied
     embedding *is* the output head, so the ternary model can adapt or forget
     with zero flips, and STE-noisy gradients in the ternary layers may bias
     optimisation toward routing adaptation through the clean-gradient float
@@ -2269,37 +2295,39 @@ hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
     shift — and report task-induced flips over that floor, as the phase-1b null
     control did for harness noise. This is the strongest reviewer objection to
     the eventual post, and it is answerable cheaply.
-25. **Pre-empt the 2-bit objection in one paragraph, not an experiment.** The
-    community claim that 2-bit QAT may beat 1.58-bit comes from a 15.5M-param
-    unreproduced experiment, an order of magnitude below our scale; "is ternary
-    the best low-bit point" is out of scope (spec §10). Our contribution is the
-    forgetting mechanism and the data-matched float-twin control, which is
-    bit-width-agnostic in method. Say that once, in the motivation section.
+- ~~25. Pre-empt the 2-bit objection.~~ — **DROPPED to a write-up sentence**
+  2026-08-09 (Arley accepted the review's cuts). Not an item: one sentence in the
+  motivation section saying the claim comes from an unreproduced 15.5M-param
+  experiment an order of magnitude below our scale, and that "is ternary the best
+  low-bit point" is out of scope per spec §10.
 - ~~26. Decide and state the LR policy across twins.~~ — decided 2026-08-09
   (delegated by Arley): **same LR in both arms**, following Nielsen et al., so the
   pair differs in one variable. Microsoft's 6× is from-scratch pretraining at 1M
   batches. See the delegated-decisions entry above.
-27. **Check the double-normalisation.** Microsoft's conversion recipe step 2 is
-    *"remove RMSNorm before attention and SwiGLU because BitLinear has built-in
-    RMSNorm"*. We do not: `convert.py` replaces the linears and leaves the block's
-    `input_layernorm` / `post_attention_layernorm` in place, so `q/k/v/gate/up`
-    are normed twice (learnable, then our parameter-free one) while `o/down` get
-    ours alone — which was the v1 fix. Our second norm partially undoes the
-    learned gain. It demonstrably works, so this is a deviation to *measure and
-    report*, not to panic about, but it must not be presented as "we followed the
-    reference recipe". Cheap ablation at 135M.
-28. **Ablate the λ warmup — it may be doing nothing.** The HF blog measured on
-    SmolLM-135M that λ warmup and immediate full quantisation gave curves that
-    *"closely align, and the resulting perplexities aren't significantly
-    different"*; Nielsen et al. found transition spikes harmless and their
-    mitigations gave no final-quality gain. We spend 20% of every run on this.
-29. **8-bit Adam with ternary QAT is unvalidated by anyone.** The sweep found
+- ~~27. Check the double-normalisation.~~ — **DROPPED to a write-up sentence**
+  2026-08-09. The deviation is real (`convert.py` leaves the block's
+  `input_layernorm`/`post_attention_layernorm` in place, so `q/k/v/gate/up` are
+  normed twice and `o/down` only by ours), but both phase-2 arms are compared to
+  their *own* baselines, so it cannot confound the forgetting result. Say "we
+  retain the block norms rather than removing them as Microsoft's step 2
+  specifies" and move on. No 135M ablation.
+- ~~28. Ablate the λ warmup.~~ — **DROPPED** 2026-08-09. The conversion is
+  finished and its warmup cost is sunk; whether warmup helped has no bearing on
+  phase-2 validity. Cite the HF blog's measured "curves closely align" at this
+  scale. Revisit only if we ever reconvert.
+29. **[DEFERRED, with a trigger]** Run the 135M fp32-Adam vs 8-bit-Adam
+    comparison only if measured flip rates come out far from the published
+    ~0.05%/step, or if the H1 result is borderline. 8-bit Adam is unavoidable at
+    360M and both arms share it, so it cannot differ between twins. The sweep found
     zero discussion of whether bitsandbytes 8-bit optimizer state interacts badly
     with latent weights near the absmean threshold — where quantisation error in
     the *optimizer* could flip effective weights. We depend on it for the 360M
     memory budget. At minimum, a 135M fp32-Adam vs 8-bit-Adam flip-rate
     comparison before flips become the headline metric.
-30. **Report flip rate against the published baseline.** BitNet's measured
+30. **[SPLIT] Do the zero-fraction check now** (minutes, CPU — validates the
+    absmean implementation against Microsoft's "nearly uniform" ≈1/3); the
+    baseline comparison itself is a write-up table row, not a task.
+    BitNet's measured
     per-step ternary flip rate is ~0.05% (DQT arXiv 2412.04787 §5.2); binary nets
     have >50% "silent weights" never flipping (2407.05257). Our numbers should be
     stated relative to these, not in isolation. Also check our zero fraction

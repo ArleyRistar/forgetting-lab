@@ -40,9 +40,9 @@ import time
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
-from flab import bitlinear as bl
+from flab import loading
 from flab.convert import DATASET, DATASET_CONFIG
 
 BASE = "HuggingFaceTB/SmolLM2-360M"
@@ -123,21 +123,22 @@ def heldout_loss(model, blocks, batch_size: int = 2) -> tuple[float, int]:
 
 
 def load(kind: str, path: str | None):
-    if kind == "base":
-        m = AutoModelForCausalLM.from_pretrained(BASE, dtype=torch.float32)
-    elif kind == "float":
-        m = AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32)
-    elif kind == "ternary":
-        m = AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32)
-        # The checkpoint holds LATENT weights; ternarisation happens in the
-        # forward pass, so it must be re-applied at λ=1 to score the model that
-        # actually exists. Loading it without converting would score a float
-        # model and report it as ternary.
-        m, n = bl.convert(m, lambda_=1.0)
-        print(f"  re-applied BitLinear to {n} layers at lambda=1", flush=True)
-    else:
-        raise ValueError(kind)
-    return m.cuda() if torch.cuda.is_available() else m
+    """Load through the shared path (`flab.loading`, open item 21).
+
+    That module re-applies BitLinear at λ=1 for ternary checkpoints — which hold
+    *latent* weights — and asserts the effective weights really are three-valued.
+    The detection is driven by each run's own `convert.json`, so `base` and the
+    float twin come back unconverted without special-casing here.
+    """
+    model, n = loading.load_converted(BASE if kind == "base" else path)
+    if kind == "ternary" and n == 0:
+        raise SystemExit(
+            f"{path} did not load as ternary — no BitLinear layers were "
+            "applied, so this would score a FLOAT model and label it ternary")
+    if n:
+        print(f"  re-applied BitLinear to {n} layers at lambda=1, verified "
+              "three-valued", flush=True)
+    return model
 
 
 def main() -> None:
