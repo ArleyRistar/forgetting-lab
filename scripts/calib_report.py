@@ -125,7 +125,7 @@ def main() -> None:
         for b in r["bounds"]:
             kl = b.get("stability", {}).get("kl_from_base")
             if kl is not None:
-                acc = st.mean(b["tasks"][t]["token_acc"] for t in r["tasks"])
+                acc = st.mean(acc_of(b["tasks"][t]) for t in r["tasks"])
                 kl_acc_pairs.append((kl, acc))
 
     def pooled(label, vals):
@@ -192,7 +192,7 @@ def main() -> None:
             kl = b.get("stability", {}).get("kl_from_base")
             if kl is None:
                 continue
-            acc = st.mean(b["tasks"][t]["token_acc"] for t in r_["tasks"])
+            acc = st.mean(acc_of(b["tasks"][t]) for t in r_["tasks"])
             by_model.setdefault(r_["model"], []).append((i, kl, acc))
 
     if len(by_model) >= 2:
