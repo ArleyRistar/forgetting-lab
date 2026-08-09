@@ -21,6 +21,7 @@ import json
 
 from datasets import Dataset, DatasetDict
 
+from flab import synthetic
 from flab.data import TAGS
 
 ROOT = Path(__file__).resolve().parents[2] / "data" / "trace" / "TRACE-Benchmark"
@@ -41,6 +42,7 @@ VARIANTS = (
 TASKS = [
     "C-STANCE", "FOMC", "MeetingBank", "Py150",
     "ScienceQA", "NumGLUE-cm", "NumGLUE-ds", "20Minuten",
+    *synthetic.TASKS,
 ]
 
 # Phase-1a development trio (Arley, 2026-08-08). Picked on the measured length
@@ -163,6 +165,12 @@ def load_probe_examples(
 
 
 def _read(task: str, split: str, variant: str = VARIANT) -> list[dict]:
+    # Synthetic control tasks are generated, not vendored. They enter through
+    # the same loader so the harness, probe and metrics need no special case —
+    # a control that ran through a different code path would be validating a
+    # different instrument than the one phase 2 uses.
+    if task in synthetic.TASKS:
+        return synthetic.make(task, split)
     path = ROOT / variant / task / f"{split}.json"
     if not path.is_file():
         raise FileNotFoundError(f"{path} missing — run scripts/fetch_trace.sh")

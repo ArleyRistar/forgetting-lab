@@ -1,0 +1,26 @@
+# Synthetic forgetting control: disjoint pair (phase-1b task 5).
+#
+# The two stages teach DISJOINT keys, so nothing forces interference and a
+# model with spare capacity can hold both. ZERO forgetting is the analytically
+# known answer; whatever we measure instead is the harness's noise floor.
+run_name: synth-disjoint
+model: HuggingFaceTB/SmolLM2-360M
+seed: 0
+mode: lora
+optim: adamw_torch
+
+stages:
+  - {task: synth-disjoint-a, max_steps: 400, learning_rate: 5.0e-4}
+  - {task: synth-disjoint-b, max_steps: 400, learning_rate: 5.0e-4}
+
+train:
+  batch_size: 4
+  grad_accum: 4
+  max_length: 128
+
+probe:
+  tasks: all
+  n_eval: 50          # every key
+  max_length: 128
+  batch_size: 4
+  reference_n: 0      # not needed for this gate, and Lima is slow

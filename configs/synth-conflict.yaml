@@ -1,0 +1,26 @@
+# Synthetic forgetting control: conflict pair (phase-1b task 5).
+#
+# Both stages teach the SAME keys with DIFFERENT values, so learning
+# stage B must destroy stage A - one distribution cannot concentrate on two
+# values of one key. LARGE forgetting is the analytically known answer.
+run_name: synth-conflict
+model: HuggingFaceTB/SmolLM2-360M
+seed: 0
+mode: lora
+optim: adamw_torch
+
+stages:
+  - {task: synth-conflict-a, max_steps: 400, learning_rate: 5.0e-4}
+  - {task: synth-conflict-b, max_steps: 400, learning_rate: 5.0e-4}
+
+train:
+  batch_size: 4
+  grad_accum: 4
+  max_length: 128
+
+probe:
+  tasks: all
+  n_eval: 50          # every key
+  max_length: 128
+  batch_size: 4
+  reference_n: 0      # not needed for this gate, and Lima is slow
