@@ -139,6 +139,24 @@ class RunConfig:
         cfg.validate()
         return cfg
 
+    @classmethod
+    def from_dict(cls, raw: dict) -> RunConfig:
+        """Rebuild a config from `run.json`'s stored copy.
+
+        This is why provenance records the whole config rather than just its
+        hash: a finished run can be re-analysed later without hunting for the
+        YAML that produced it, which may have been edited since.
+        """
+        raw = dict(raw)
+        stages = tuple(StageConfig(**x) for x in raw.pop("stages", []))
+        lora_raw = dict(raw.pop("lora", {}) or {})
+        tm = lora_raw.get("target_modules")
+        if isinstance(tm, list):
+            lora_raw["target_modules"] = tuple(tm)
+        return cls(stages=stages, lora=LoraSpec(**lora_raw),
+                   train=TrainSpec(**(raw.pop("train", {}) or {})),
+                   probe=ProbeConfig(**(raw.pop("probe", {}) or {})), **raw)
+
     def validate(self) -> None:
         if self.mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}, got {self.mode!r}")
