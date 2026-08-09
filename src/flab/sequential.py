@@ -49,9 +49,22 @@ def verify_model_digest(cfg: RunConfig) -> str | None:
 
     from huggingface_hub import try_to_load_from_cache
 
+    # Repos do not agree on the weight filename: Llama and Gemma ship
+    # `model.safetensors`, Qwen3.5-0.8B ships
+    # `model.safetensors-00001-of-00001.safetensors`. Look for the standard
+    # name, then fall back to the single safetensors file in the snapshot —
+    # and refuse if that is ambiguous rather than hashing an arbitrary shard.
     path = try_to_load_from_cache(cfg.model, "model.safetensors")
     if not isinstance(path, str):
-        raise RuntimeError(f"cannot verify {cfg.model}: model.safetensors not in cache")
+        anchor = try_to_load_from_cache(cfg.model, "config.json")
+        if not isinstance(anchor, str):
+            raise RuntimeError(f"cannot verify {cfg.model}: nothing in cache")
+        found = sorted(Path(anchor).parent.glob("*.safetensors*"))
+        if len(found) != 1:
+            raise RuntimeError(
+                f"cannot verify {cfg.model}: expected one safetensors file, "
+                f"found {len(found)} — pin a digest per shard or drop model_sha256")
+        path = str(found[0])
     got = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     if got != cfg.model_sha256:
         raise RuntimeError(
