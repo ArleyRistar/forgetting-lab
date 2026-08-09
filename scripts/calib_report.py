@@ -43,6 +43,7 @@ def load_run(d: Path):
     return {
         "name": d.name, "tasks": tasks, "base": base, "bounds": bounds,
         "seed": cfg["seed"], "order": [s["task"] for s in cfg["stages"]],
+        "model": cfg["model"].split("/")[-1],
     }
 
 
@@ -110,13 +111,59 @@ def main() -> None:
         r, p, n = clmetrics.pearson([x for x, _ in kl_acc_pairs],
                                     [y for _, y in kl_acc_pairs])
         ps = "n/a" if p is None else f"{p:.5f}"
-        print(f"\n1. KL vs accuracy: r={r:+.3f}  p={ps}  n={n}")
+        print(f"\n1. WITHIN-run KL vs accuracy: r={r:+.3f}  p={ps}  n={n}")
+        print("   (expected positive: both rise with training. NOT the paper's"
+              " claim — see the cross-model figure above.)")
         print(f"   paper: r={PAPER_R:+.3f}, p<0.001")
         same_sign = (r < 0) == (PAPER_R < 0)
         print(f"   -> sign {'MATCHES' if same_sign else 'DIFFERS'}; "
               f"|r| {'comparable' if 0.5 * abs(PAPER_R) <= abs(r) <= 2 * abs(PAPER_R) else 'differs in magnitude'}")
     else:
         print("\n1. KL vs accuracy: too few paired boundaries")
+
+    # -- the cross-model gate, which is what the paper's r actually measures --
+    # Their r = -0.497 is "across all models": stable models drift less and
+    # score higher. Within a single model, KL and accuracy both rise with
+    # training, so a within-run correlation measures the shared time trend and
+    # comes out positive regardless. Only the cross-model pooling tests them.
+    by_model = {}
+    for r_ in runs:
+        for i, b in enumerate(r_["bounds"]):
+            kl = b.get("stability", {}).get("kl_from_base")
+            if kl is None:
+                continue
+            acc = st.mean(b["tasks"][t]["token_acc"] for t in r_["tasks"])
+            by_model.setdefault(r_["model"], []).append((i, kl, acc))
+
+    if len(by_model) >= 2:
+        print("\nPer model (final checkpoint, pooled over seeds and orders):")
+        print(f"  {'model':<26}{'KL':>18}{'accuracy':>18}")
+        summary = []
+        for m, pts in sorted(by_model.items()):
+            last = max(i for i, _, _ in pts)
+            kls = [k for i, k, _ in pts if i == last]
+            accs = [a for i, _, a in pts if i == last]
+            summary.append((m, st.mean(kls), st.mean(accs)))
+            sd_k = f"± {st.stdev(kls):.4f}" if len(kls) > 1 else ""
+            sd_a = f"± {st.stdev(accs):.4f}" if len(accs) > 1 else ""
+            print(f"  {m:<26}{st.mean(kls):>10.4f} {sd_k:<7}{st.mean(accs):>10.4f} {sd_a:<7}")
+
+        pooled_kl = [k for pts in by_model.values() for _, k, _ in pts]
+        pooled_acc = [a for pts in by_model.values() for _, _, a in pts]
+        rr, pp, nn = clmetrics.pearson(pooled_kl, pooled_acc)
+        print(f"\n  CROSS-MODEL KL vs accuracy: r={rr:+.3f} p="
+              f"{'n/a' if pp is None else f'{pp:.5f}'} n={nn}")
+        print(f"  paper: r={PAPER_R:+.3f}, p<0.001  ->  sign "
+              f"{'MATCHES' if (rr < 0) == (PAPER_R < 0) else 'DIFFERS'}")
+
+        print("\n  Predicted ordering (theirs): gemma drifts most/scores worst,"
+              " qwen least/best")
+        by_kl = [m for m, _, _ in sorted(summary, key=lambda x: -x[1])]
+        by_acc = [m for m, _, _ in sorted(summary, key=lambda x: x[2])]
+        print(f"    ours by KL desc : {' > '.join(by_kl)}")
+        print(f"    ours by acc asc : {' < '.join(by_acc)}")
+        print(f"    -> orderings {'AGREE' if by_kl == by_acc else 'DISAGREE'}"
+              " with each other (they must, if drift tracks damage)")
 
     kls_fwd = [k for o, _, _, k in rows if o == "fwd" and k is not None]
     kls_rev = [k for o, _, _, k in rows if o == "rev" and k is not None]
