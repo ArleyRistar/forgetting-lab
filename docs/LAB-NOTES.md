@@ -1359,6 +1359,49 @@ comparison is ternary vs float rather than model vs model, the same hazard
 applies directly — a metric that behaves differently on quantized models would
 manufacture exactly the effect the project is looking for.
 
+## 2026-08-09 — first 135M ternary shakedown failed: missing per-layer norm
+
+Loss climbed **monotonically with lambda** — 2.75 at lambda 0, 3.36 at 0.5,
+**11.75 at 1.0** — against ln(49152) = 10.8 for a uniform guess. So the fully
+quantised model was worse than random.
+
+The shape is diagnostic. A spike that then oscillates means optimizer
+instability; a smooth climb tracking lambda means the quantised *function* is
+broken and training is not recovering it. It was the latter.
+
+**Cause: no normalisation inside BitLinear.** The recipe calls normalisation
+before activation quantisation essential and I skipped it, reasoning that
+SmolLM2's pre-norm blocks already normalise. They do — but only the *block*
+input. `o_proj` receives raw attention output and `down_proj` receives the raw
+SwiGLU product, and per-token absmax quantisation divides by the largest
+activation in each token, so a wide-dynamic-range input wastes most of the int8
+grid. Those two layers are exactly the ones the block norms do not cover.
+
+**A test passed while testing the wrong thing.** `test_norm_precedes_the_quantised_path`
+asserted the block has `input_layernorm` and `post_attention_layernorm`. Both
+true, both irrelevant to whether each BitLinear normalises its own input. It was
+written under a heading claiming to check the thing it did not check.
+
+### Fix
+
+Parameter-free RMS norm inside `BitLinear.forward`, **interpolated by lambda**:
+
+```python
+xn = x + lambda_ * (rms_norm(x) - x)
+```
+
+The recipe applies the norm unconditionally. Interpolating keeps lambda=0
+bit-identical to the float layer, which phase 1c's premise requires — the float
+weights are the initial latent weights, and if lambda=0 is not exactly the float
+model then the conversion does not start where it claims to.
+
+Parameter-free deliberately: a learnable norm would add randomly initialised
+parameters, breaking both the unchanged-parameter-count invariant and that same
+premise.
+
+This is the restart spec §9 budgets for QAT fiddliness. Cost: ~25 min of 135M
+compute.
+
 ## Open items — the live list
 
 Closed:

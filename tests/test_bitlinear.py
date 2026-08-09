@@ -199,3 +199,41 @@ def test_norm_precedes_the_quantised_path(smol):
     assert hasattr(layer, "input_layernorm")
     assert hasattr(layer, "post_attention_layernorm")
     assert type(layer.input_layernorm).__name__.endswith("RMSNorm")
+
+
+def test_norm_is_applied_inside_the_layer_not_just_by_the_block():
+    """The first 135M shakedown failed because this was missing.
+
+    The block's own norms cover the block *input*; o_proj sees raw attention
+    output and down_proj sees the raw SwiGLU product, and per-token absmax
+    quantisation of a wide-dynamic-range input wastes the int8 grid. The
+    earlier `test_norm_precedes_the_quantised_path` asserted the block has
+    norms — true, and irrelevant. It passed while testing the wrong thing.
+    """
+    torch.manual_seed(0)
+    lin = nn.Linear(64, 32)
+    bit = bl.BitLinear.from_linear(lin, lambda_=1.0)
+    # An input with wide per-token dynamic range is what breaks without a norm.
+    x = torch.randn(4, 64) * torch.tensor([[1.0], [50.0], [0.02], [5.0]])
+    import torch.nn.functional as F
+
+    normed = bl.rms_norm(x)
+    # atol is loose because eps=1e-6 is not negligible against the row scaled
+    # by 0.02, whose mean-square is ~4e-4 — the norm is right, 1e-3 was not.
+    assert normed.pow(2).mean(dim=-1).allclose(torch.ones(4), atol=2e-2)
+
+    # The layer must actually use it: recompute the quantised forward WITHOUT
+    # the norm and assert the real layer differs.
+    wq = bl.ste(lin.weight, bl.weight_quant(lin.weight), 1.0)
+    no_norm = F.linear(bl.ste(x, bl.activation_quant(x), 1.0), wq, lin.bias)
+    assert not torch.allclose(bit(x), no_norm, atol=1e-4)
+
+
+def test_lambda_zero_still_bit_identical_after_adding_the_norm():
+    """The norm is interpolated by lambda so conversion still starts exactly at
+    the float model — the premise phase 1d depends on."""
+    torch.manual_seed(0)
+    lin = nn.Linear(32, 16)
+    bit = bl.BitLinear.from_linear(lin, lambda_=0.0)
+    x = torch.randn(8, 32) * 20
+    assert torch.equal(bit(x), lin(x))

@@ -45,6 +45,29 @@ def activation_quant(x: torch.Tensor) -> torch.Tensor:
     return (x * scale).round().clamp_(-128, 127) / scale
 
 
+def rms_norm(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Parameter-free RMS norm applied inside BitLinear before quantising.
+
+    The recipe calls normalisation before activation quantisation **essential**,
+    and skipping it is what broke the first 135M shakedown: loss climbed
+    smoothly with lambda to 11.75, above the ~10.8 of a uniform guess.
+
+    Per-token absmax quantisation divides by the largest activation in each
+    token, so a layer whose inputs have wide dynamic range wastes most of the
+    int8 grid. A transformer block's own norms do not cover this: they normalise
+    the *block* input, while `o_proj` sees raw attention output and `down_proj`
+    sees the raw SwiGLU product. Those two are exactly the layers that break.
+
+    Parameter-free deliberately — a learnable norm would add randomly
+    initialised parameters, breaking both the unchanged-parameter-count
+    invariant and the premise that the float weights are the initial latents.
+    """
+    dtype = x.dtype
+    x32 = x.float()
+    x32 = x32 * torch.rsqrt(x32.pow(2).mean(dim=-1, keepdim=True) + eps)
+    return x32.to(dtype)
+
+
 def ste(x: torch.Tensor, quantised: torch.Tensor, lambda_: float) -> torch.Tensor:
     """Straight-through estimator with warmup.
 
@@ -88,7 +111,13 @@ class BitLinear(nn.Linear):
             # mathematically identical but not bitwise, and the premise of the
             # conversion is bitwise equality at the moment of conversion.
             return F.linear(x, self.weight, self.bias)
-        x = ste(x, activation_quant(x), self.lambda_)
+        # Normalise, then quantise — with the norm interpolated by lambda too,
+        # so lambda=0 stays exactly the float layer. The recipe applies the norm
+        # unconditionally; doing that here would mean the conversion starts from
+        # a function that is not the float model, and phase 1c's premise is that
+        # it is.
+        xn = x + self.lambda_ * (rms_norm(x) - x)
+        x = ste(xn, activation_quant(xn), self.lambda_)
         w = ste(self.weight, weight_quant(self.weight), self.lambda_)
         return F.linear(x, w, self.bias)
 
