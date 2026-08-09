@@ -117,18 +117,44 @@ curl -fsSL https://claude.ai/install.sh | bash    # Claude Code, then: claude lo
 
 ## 10. Repo transfer — D2
 
-**Option A (done 2026-08-05): private repo at
-`github.com/ArleyRistar/forgetting-lab`.** On the lab box:
+**As built (2026-08-07): bundle over the LAN, then a repo-scoped deploy key for
+pushes.** The private repo is `github.com/ArleyRistar/forgetting-lab`; the box
+reaches it over SSH as `github-flab`, so it never holds an account-wide PAT.
+
+On the Zenbook:
 
 ```bash
-sudo dnf install -y gh
-gh auth login          # browser flow, ArleyRistar account, HTTPS protocol
-gh repo clone ArleyRistar/forgetting-lab ~/forgetting-lab
+cd ~/personal/forgetting-lab && git bundle create /tmp/flab.bundle main
+scp /tmp/flab.bundle arley@gs66-lab.local:~
 ```
 
-**Option B (LAN only, no remote):** on the Zenbook:
-`cd ~/personal/forgetting-lab && git bundle create /tmp/flab.bundle main && scp /tmp/flab.bundle arley@gs66-lab.local:~`
-then here: `git clone -b main ~/flab.bundle ~/forgetting-lab`.
+On the lab box:
+
+```bash
+git clone -b main ~/flab.bundle ~/forgetting-lab
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_flab -C gs66-lab-forgetting-lab-deploy
+cat ~/.ssh/id_ed25519_flab.pub   # paste into repo Settings → Deploy keys, ALLOW WRITE
+printf 'Host github-flab\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/id_ed25519_flab\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+git -C ~/forgetting-lab remote set-url origin github-flab:ArleyRistar/forgetting-lab.git
+```
+
+Key details and the revoke command:
+`~/secrets/github-forgetting-lab-deploykey-20260807.txt`.
+
+**`gh` is optional** — push works over the deploy key alone. It is only needed
+for issues, releases and `gh api`. Installed with `sudo dnf install -y gh`;
+authenticated 2026-08-09 from the Zenbook without a browser:
+
+```bash
+gh auth token | ssh lab 'gh auth login --with-token'
+```
+
+That shares **one** token across both machines — re-running `gh auth login` or
+revoking it on either box logs the other one out. Git push is unaffected either
+way (different credential).
+
+**Rejected: `gh repo clone` over HTTPS.** It puts an account-wide token on the
+box for something the deploy key already does with far less reach.
 
 ## 11. Physical
 
@@ -137,11 +163,14 @@ then here: `git clone -b main ~/flab.bundle ~/forgetting-lab`.
 
 ## Verification — all must pass
 
-- [ ] `nvidia-smi` shows the GPU and (if step 7 worked) `power.limit` = 90 W
+- [ ] `nvidia-smi` shows the GPU. On this vBIOS `power.limit` reads `[N/A]` —
+      the cap that actually applies is the 1200 MHz clock ceiling from step 7
 - [ ] SSH from Zenbook works with the lid closed, no password prompt
 - [ ] `systemctl get-default` → `multi-user.target`
 - [ ] `uv --version` and `claude --version` both print
 - [ ] `~/forgetting-lab` cloned; `git log --oneline` shows the spec commits
+- [ ] `git -C ~/forgetting-lab push --dry-run` → `Everything up-to-date`, which
+      is what proves the deploy key works before a run depends on it
 - [ ] Machine survives 10 min lid-closed idle without suspending
 
 Then, on the lab box: `cd ~/forgetting-lab && claude`, and point the session at
@@ -179,6 +208,11 @@ Deviations from the checklist above:
   or mesa driver packages touched. Reversible via `dnf history undo`.
 - **Battery charge cap unavailable** — this firmware exposes no
   `charge_control_end_threshold`.
+- **`nvidia-smi -pl` is unsupported on this vBIOS**, so step 7's power cap does
+  not exist here. `nvidia-powercap.service` ships the fallback instead —
+  `-pm 1` plus `-lgc 300,1200` — and `power.limit` permanently reads `[N/A]`.
+  The 90 W figure in step 7 is the intent, not something you can verify.
 - **NVIDIA 610.57.04** built for kernel 7.1.6-201.fc44 (the default boot
-  kernel). It cannot load until **Secure Boot is disabled** — the one remaining
-  manual step.
+  kernel). It could not load until Secure Boot was disabled in the BIOS —
+  **done since**, `mokutil --sb-state` now reports `SecureBoot disabled` and
+  `nvidia-smi` sees the GPU.
