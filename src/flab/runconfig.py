@@ -78,6 +78,8 @@ class ProbeConfig:
     # with padding width). Changing it mid-run would manufacture a shift that
     # reads as forgetting, so it lives in the hash.
     batch_size: int = 4
+    # Reference-set size for the stability probe (2606.27634's R). 0 disables it.
+    reference_n: int = 200
 
 
 @dataclass(frozen=True)
@@ -149,6 +151,8 @@ class RunConfig:
                           ("lora.alpha", self.lora.alpha)):
             if val <= 0:
                 raise ValueError(f"{name} must be positive")
+        if self.probe.reference_n < 0:
+            raise ValueError("probe.reference_n must be >= 0 (0 disables)")
         if isinstance(self.lora.target_modules, str) and self.lora.target_modules != "all-linear":
             raise ValueError("lora.target_modules must be a list or the string 'all-linear'")
         for t in self.probe_tasks:

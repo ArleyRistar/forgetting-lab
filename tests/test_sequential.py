@@ -40,7 +40,7 @@ def cfg(**over) -> RunConfig:
     base = dict(
         run_name="t",
         stages=(StageConfig("FOMC", max_steps=2, learning_rate=1e-4), StageConfig("Py150", max_steps=2, learning_rate=1e-4)),
-        probe=ProbeConfig(n_eval=2, max_length=128, batch_size=2),
+        probe=ProbeConfig(n_eval=2, max_length=128, batch_size=2, reference_n=2),
     )
     return RunConfig(**{**base, **over})
 
@@ -257,7 +257,7 @@ def test_optimizer_state_is_empty_at_the_start_of_every_stage(tmp_path, tok):
 
 def test_epochs_schedule_runs_and_records_steps(tmp_path, tok):
     c = cfg(stages=(StageConfig("FOMC", learning_rate=1e-4, epochs=1),),
-            probe=ProbeConfig(n_eval=2, max_length=128, batch_size=2))
+            probe=ProbeConfig(n_eval=2, max_length=128, batch_size=2, reference_n=2))
     state = sequential.run(c, tmp_path / "r", model=tiny_model(tok), tokenizer=tok)
     assert state.complete
     # The resolved step count must be recorded, or an epochs run and a

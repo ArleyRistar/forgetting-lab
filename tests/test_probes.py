@@ -151,3 +151,75 @@ def test_live_adapter_is_refused_for_generation(tiny):
     with pytest.raises(RuntimeError, match="1.89"):
         probes.ensure_no_live_adapter(FakePeft())
     probes.ensure_no_live_adapter(model)  # a plain model is fine
+
+
+# -- stability probe (phase-1b task 3) -----------------------------------
+
+
+def lora_wrap(model):
+    from peft import LoraConfig, get_peft_model
+
+    return get_peft_model(model, LoraConfig(
+        r=8, lora_alpha=16, lora_dropout=0.0, bias="none",
+        target_modules=["q_proj", "v_proj"],
+    ))
+
+
+def test_fresh_adapter_gives_exactly_zero_kl(tiny):
+    """The decisive validation of the drift metric.
+
+    peft initialises lora_B to zeros, so an untrained adapter is a mathematical
+    no-op: the adapter-enabled and adapter-disabled forward passes are the same
+    function. KL must therefore be 0. If it is not, the two passes are not
+    comparable and every drift number afterwards is noise rather than signal.
+    """
+    model, tok = tiny
+    r = probes.probe_stability(lora_wrap(model), tok, n_ref=4, max_length=256, batch_size=2)
+    assert r.warning is None and r.n_tokens > 0
+    assert r.kl_from_base == pytest.approx(0.0, abs=1e-6), r.kl_from_base
+    assert r.delta_entropy == pytest.approx(0.0, abs=1e-6)
+    assert r.margin == pytest.approx(r.base_margin, abs=1e-6)
+
+
+def test_a_perturbed_adapter_gives_nonzero_kl(tiny):
+    """...and that it can actually see drift, so the zero above is not vacuous."""
+    import torch
+
+    model, tok = tiny
+    peft_model = lora_wrap(model)
+    with torch.no_grad():
+        for n, p in peft_model.named_parameters():
+            if "lora_B" in n:
+                p.add_(torch.randn_like(p) * 0.05)
+    r = probes.probe_stability(peft_model, tok, n_ref=4, max_length=256, batch_size=2)
+    assert r.kl_from_base > 1e-4, f"perturbed adapter should drift, got {r.kl_from_base}"
+
+
+def test_lima_eval_is_all_empty_answers_and_yields_a_warning_not_a_number(tiny):
+    """Regression test for a real data trap.
+
+    Lima is the obvious reference set — TRACE's replay split, disjoint from
+    every task — but its eval/test splits are 100% empty answers. Reaching for
+    Lima/eval must produce a refusal, never a plausible-looking drift number.
+    """
+    model, tok = tiny
+    r = probes.probe_stability(lora_wrap(model), tok, n_ref=8, max_length=256, split="eval")
+    assert r.n_tokens == 0
+    assert r.kl_from_base is None
+    assert r.warning and "nothing was measured" in r.warning
+
+
+def test_stability_refuses_a_bare_model_with_no_base(tiny):
+    """Full fine-tuning has no adapter to disable, so phase 1c must pass a base
+    explicitly. Silently comparing a model to itself would report zero drift."""
+    model, tok = tiny
+    r = probes.probe_stability(model, tok, n_ref=4, max_length=256)
+    assert r.kl_from_base is None
+    assert r.warning and "not a PEFT model" in r.warning
+
+
+def test_reference_set_selection_is_deterministic():
+    a, _ = trace.load_reference_examples(n=8, seed=0)
+    b, _ = trace.load_reference_examples(n=8, seed=0)
+    c, _ = trace.load_reference_examples(n=8, seed=1)
+    assert a == b and a != c

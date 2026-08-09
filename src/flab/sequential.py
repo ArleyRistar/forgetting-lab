@@ -26,6 +26,7 @@ from flab import probes, trace
 from flab.runconfig import RunConfig
 from flab.runstate import RunState, DONE, RUNNING
 
+
 def stage_dir(run_dir: Path, index: int, task: str) -> Path:
     return run_dir / f"stage-{index}-{task}"
 
@@ -194,11 +195,24 @@ def _train_stage(cfg: RunConfig, model, tokenizer, index: int, out: Path) -> int
 
 
 def _probe_to_disk(cfg: RunConfig, model, tokenizer, run_dir: Path, name: str) -> str:
+    from dataclasses import asdict
+
     result = probes.probe_all(
         model, tokenizer, cfg.probe_tasks,
         n_eval=cfg.probe.n_eval, max_length=cfg.probe.max_length,
         batch_size=cfg.probe.batch_size, seed=cfg.seed, variant=cfg.trace_variant,
     )
+    if cfg.probe.reference_n:
+        # Drift on a set the model never trains on. Cheap, and the only metric
+        # here that phase 1d's flip-fraction has a direct analogue to.
+        stab = probes.probe_stability(
+            model, tokenizer, n_ref=cfg.probe.reference_n,
+            max_length=cfg.probe.max_length, batch_size=cfg.probe.batch_size,
+            seed=cfg.seed, variant=cfg.trace_variant,
+        )
+        result["stability"] = asdict(stab)
+        if stab.warning:
+            result["warnings"] = {**(result.get("warnings") or {}), "stability": stab.warning}
     (run_dir / name).write_text(json.dumps(result, indent=2))
     return name
 

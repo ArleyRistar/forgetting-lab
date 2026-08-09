@@ -50,6 +50,16 @@ TASKS = [
 # hard.
 DEV_TASKS = ["FOMC", "Py150", "ScienceQA"]
 
+# TRACE's replay set, used here as the stability *reference set* — disjoint from
+# every task by construction, which is what 2606.27634 requires of R.
+#
+# Its `train` split, deliberately. **Lima/eval and Lima/test are 100% empty
+# answers** — all 300 rows in each, in both variants (verified 2026-08-09) — so
+# the natural reach for a held-out reference set yields zero scorable tokens.
+# We never train on Lima, so its train split *is* held out for our purposes.
+REFERENCE = "Lima"
+REFERENCE_SPLIT = "train"
+
 # Pre-trim ceiling. Py150 prompts reach 162k characters and tokenizing one in
 # full costs far more than the ~1024 tokens that survive truncation: preparing
 # Py150 took 9.1 s before this. Left-truncation keeps the END of the prompt, so
@@ -122,6 +132,16 @@ def _order(n: int, seed: int) -> list[int]:
     hash" actually requires.
     """
     return sorted(range(n), key=lambda i: hashlib.sha256(f"{seed}:{i}".encode()).hexdigest())
+
+
+def load_reference_examples(
+    n: int = 200, seed: int = 0, variant: str = VARIANT, split: str | None = None
+) -> tuple[list[dict], dict]:
+    """Fixed reference set for stability monitoring (2606.27634's R)."""
+    rows = _read(REFERENCE, split or REFERENCE_SPLIT, variant)
+    take = _order(len(rows), seed)[: min(n, len(rows))]
+    picked = [{"prompt": rows[i]["prompt"], "answer": rows[i]["answer"]} for i in take]
+    return picked, {"requested": n, "used": len(picked), "available": len(rows)}
 
 
 def load_probe_examples(

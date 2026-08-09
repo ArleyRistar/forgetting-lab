@@ -70,7 +70,8 @@ def ensure_no_live_adapter(model) -> None:
         )
 
 
-def _encode(tokenizer, prompt: str, answer: str, max_length: int):
+def _encode(tokenizer, prompt: str, answer: str, max_length: int,
+            allow_answer_truncation: bool = False):
     """Build (input_ids, labels) with an exact prompt/answer boundary.
 
     The two halves are tokenized separately and concatenated rather than
@@ -82,11 +83,27 @@ def _encode(tokenizer, prompt: str, answer: str, max_length: int):
     Prompts are left-truncated; the answer is never touched, because
     answer-token NLL is the measurement and a cut answer is a corrupted data
     point rather than a noisy one.
+
+    `allow_answer_truncation` exists for the **stability probe only**, and the
+    asymmetry is deliberate rather than a convenience. KL compares two
+    distributions over *identical* inputs, so both the base and the current
+    model see exactly the same (possibly truncated) tokens and the comparison
+    stays valid — truncation changes which tokens are sampled, not what the
+    number means. For NLL it would corrupt the measurement outright, scoring
+    the likelihood of a fragment as though it were a whole answer.
+
+    Without it the reference set is unusable: Lima answers run to a median of
+    **375 tokens and a p90 of 1602**, so at the paper's 512-token window only
+    66% fit at all — and dropping the rest would silently bias the reference
+    set toward short-answer examples (measured 2026-08-09).
     """
     prompt = trace.pretrim(prompt, max_length)
     prefix_ids = tokenizer(trace.prefix_of(prompt), add_special_tokens=False)["input_ids"]
     answer_ids = tokenizer(answer, add_special_tokens=False)["input_ids"]
 
+    if allow_answer_truncation:
+        # Cap the answer at 3/4 of the window so real prompt context survives.
+        answer_ids = answer_ids[: max(1, (max_length * 3) // 4)]
     # Need at least one prompt token and one answer token to score anything.
     if len(answer_ids) + 1 >= max_length:
         return None, None, False
@@ -223,3 +240,130 @@ def probe_all(model, tokenizer, tasks: list[str], *, n_eval: int = 200,
         "seconds_total": sum(r.seconds for r in results.values()),
         "warnings": warnings or None,
     }
+
+
+# -- stability / drift (phase-1b task 3) ---------------------------------
+
+
+@dataclass
+class StabilityProbe:
+    """Distributional drift from the base model on a fixed reference set.
+
+    This is 2606.27634's stability half, and it matters beyond the replication:
+    **KL from base on a held-out set is the float-side analogue of phase 1d's
+    ternary flip-fraction** — both ask "how far has this model moved", one in
+    output space and one in weight space. Building it here means phase 2 gets to
+    compare like with like rather than inventing a bridge later.
+    """
+    n_tokens: int
+    n_examples: int
+    kl_from_base: float | None      # KL(p_base || p_current), nats/token
+    delta_entropy: float | None     # H(p_current) - H(p_base)
+    margin: float | None            # top-1 minus top-2 log-prob, current
+    base_margin: float | None
+    seconds: float
+    warning: str | None
+
+
+@torch.no_grad()
+def probe_stability(
+    model,
+    tokenizer,
+    n_ref: int = 200,
+    max_length: int = 512,
+    batch_size: int = 2,
+    seed: int = 0,
+    variant: str = trace.VARIANT,
+    base_model=None,
+    split: str | None = None,
+) -> StabilityProbe:
+    """Compare the current model against its own base on the reference set.
+
+    Under LoRA the base distribution is obtained by *disabling the adapter*
+    rather than holding a second copy of the weights: it is the same tensors by
+    construction, and costs no extra VRAM on a 7.5 GiB card. A full fine-tune
+    has no such trick, so `base_model` may be passed explicitly — phase 1c will
+    need that.
+    """
+    t0 = time.perf_counter()
+    examples, stats = trace.load_reference_examples(
+        n=n_ref, seed=seed, variant=variant, split=split)
+
+    encoded = []
+    for ex in examples:
+        ids, labels, _ = _encode(tokenizer, ex["prompt"], ex["answer"], max_length,
+                                 allow_answer_truncation=True)
+        if ids is not None:
+            encoded.append((ids, labels))
+
+    can_disable = hasattr(model, "disable_adapter")
+    if not encoded or not (can_disable or base_model is not None):
+        why = ("no example survived encoding" if not encoded else
+               "model is not a PEFT model and no base_model was given")
+        return StabilityProbe(0, 0, None, None, None, None, time.perf_counter() - t0,
+                              f"{why}; nothing was measured")
+
+    device = next(model.parameters()).device
+    pad = tokenizer.pad_token_id or 0
+    was_training = model.training
+    model.eval()
+    encoded.sort(key=lambda p: len(p[0]))
+
+    kl_sum = dh_sum = m_sum = bm_sum = 0.0
+    n_tokens = 0
+    for i in range(0, len(encoded), batch_size):
+        chunk = encoded[i : i + batch_size]
+        width = min(max_length, _bucket(max(len(ids) for ids, _ in chunk)))
+        input_ids = torch.full((len(chunk), width), pad, dtype=torch.long)
+        labels = torch.full((len(chunk), width), IGNORE, dtype=torch.long)
+        attn = torch.zeros((len(chunk), width), dtype=torch.long)
+        for r, (ids, lab) in enumerate(chunk):
+            input_ids[r, : len(ids)] = torch.tensor(ids)
+            labels[r, : len(lab)] = torch.tensor(lab)
+            attn[r, : len(ids)] = 1
+        input_ids, labels, attn = input_ids.to(device), labels.to(device), attn.to(device)
+
+        mask = labels[:, 1:] != IGNORE
+        if not mask.any():
+            continue
+
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
+            cur = model(input_ids=input_ids, attention_mask=attn).logits
+            if base_model is not None:
+                base = base_model(input_ids=input_ids, attention_mask=attn).logits
+            else:
+                with model.disable_adapter():
+                    base = model(input_ids=input_ids, attention_mask=attn).logits
+
+        # Gather scored positions before upcasting — the same reason as in
+        # probe_task: full batch x seq x vocab in fp32 is ~800 MiB at 49k vocab
+        # and 2.6x that on Llama's 128k.
+        lp_cur = F.log_softmax(cur[:, :-1, :][mask].float(), dim=-1)
+        lp_base = F.log_softmax(base[:, :-1, :][mask].float(), dim=-1)
+        p_base = lp_base.exp()
+
+        kl_sum += (p_base * (lp_base - lp_cur)).sum(-1).sum().item()
+        dh_sum += (-(lp_cur.exp() * lp_cur).sum(-1) + (p_base * lp_base).sum(-1)).sum().item()
+        m_sum += (lambda t: (t[:, 0] - t[:, 1]).sum().item())(lp_cur.topk(2, -1).values)
+        bm_sum += (lambda t: (t[:, 0] - t[:, 1]).sum().item())(lp_base.topk(2, -1).values)
+        n_tokens += int(mask.sum())
+
+    if was_training:
+        model.train()
+
+    if n_tokens == 0:
+        return StabilityProbe(0, len(encoded), None, None, None, None,
+                              time.perf_counter() - t0,
+                              "zero reference tokens scored; nothing was measured")
+
+    return StabilityProbe(
+        n_tokens=n_tokens,
+        n_examples=len(encoded),
+        kl_from_base=kl_sum / n_tokens,
+        delta_entropy=dh_sum / n_tokens,
+        margin=m_sum / n_tokens,
+        base_margin=bm_sum / n_tokens,
+        seconds=time.perf_counter() - t0,
+        warning=(None if stats["used"] == stats["requested"]
+                 else f"only {stats['used']} of {stats['requested']} reference examples exist"),
+    )

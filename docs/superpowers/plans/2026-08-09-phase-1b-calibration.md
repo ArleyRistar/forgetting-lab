@@ -126,19 +126,19 @@ replicated.
 
 **Files:** modify `src/flab/trace.py`, `src/flab/probes.py`; add tests.
 
-- [ ] **Step 1: Load `Lima/train` as a reference set**
+- [x] **Step 1: Load `Lima/train` as a reference set**
 
 Held out, never trained on, disjoint from all task data — satisfying the
 paper's `R ∩ D_train = ∅` and `R ∩ D_eval = ∅`. Fixed selection by seed, as
 with every other probe set.
 
-- [ ] **Step 2: Regression-test the empty-answer trap**
+- [x] **Step 2: Regression-test the empty-answer trap**
 
 Assert that probing `Lima/eval` (all-empty answers) returns `n_tokens == 0` and
 a non-null `warning`, and **not** a number. This is the safety net working on a
 real case rather than a synthetic one; it is worth pinning permanently.
 
-- [ ] **Step 3: Probe the reference set at every boundary**
+- [x] **Step 3: Probe the reference set at every boundary**
 
 Same cadence as the task probes. Cheap — the whole 4-boundary probe cost 84.6 s
 in the shakedown.
@@ -155,7 +155,7 @@ distributional drift measure**, which is conceptually the float-side analogue of
 phase 1d's ternary flip-fraction. Building it here means phase 2 compares
 like with like.
 
-- [ ] **Step 1: KL divergence from the base model**
+- [x] **Step 1: KL divergence from the base model**
 
 Per reference-set token, `KL(p_base ‖ p_current)` over the full vocabulary,
 averaged. Needs the base model's logits, so either keep a frozen copy (memory)
@@ -163,12 +163,12 @@ or — cheaper and exact under LoRA — **disable the adapter** and run the same
 forward pass. `peft` supports `with model.disable_adapter():`. Prefer that: it
 is the same weights by construction, and it costs no extra VRAM.
 
-- [ ] **Step 2: Entropy change and top-2 margin**
+- [x] **Step 2: Entropy change and top-2 margin**
 
 ΔH against the base distribution, and the log-probability gap between the top
 two predictions. Both fall out of the same forward pass as the KL.
 
-- [ ] **Step 3: Validate KL against a known-zero case**
+- [x] **Step 3: Validate KL against a known-zero case**
 
 `KL(base ‖ base)` must be exactly 0 with the adapter disabled at stage 0. If it
 is not, the two forward passes are not comparable and every drift number after
