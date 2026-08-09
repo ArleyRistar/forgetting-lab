@@ -123,10 +123,19 @@ def main() -> None:
     p.add_argument("--output-dir", default=None)
     p.add_argument("--save-steps", type=int, default=ConvertConfig.save_steps)
     p.add_argument("--seq-len", type=int, default=ConvertConfig.seq_len)
+    p.add_argument("--warmup-frac", type=float, default=0.2,
+                   help="fraction of the run spent ramping lambda 0->1; the "
+                        "recipe uses 1000 of 5000 steps = 0.2")
+    p.add_argument("--lr", type=float, default=ConvertConfig.learning_rate)
     a = p.parse_args()
 
+    # Warmup as a fraction of the run, not a fixed step count. The first
+    # shakedown fixed it at 1000 steps, which was 67% of a 1500-step run against
+    # the recipe's 20% — and, more to the point, 16M tokens against their 2B.
     cfg = ConvertConfig(model=a.model, mode=a.mode, max_steps=a.max_steps,
-                        save_steps=a.save_steps, seq_len=a.seq_len)
+                        save_steps=a.save_steps, seq_len=a.seq_len,
+                        learning_rate=a.lr,
+                        warmup_lambda_steps=max(1, int(a.max_steps * a.warmup_frac)))
     out = Path(a.output_dir or f"outputs/convert/{a.mode}-{Path(a.model).name}")
     out.mkdir(parents=True, exist_ok=True)
 
