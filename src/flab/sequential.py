@@ -171,7 +171,7 @@ def _train_stage(cfg: RunConfig, model, tokenizer, index: int, out: Path) -> int
     data = trace.load_task(
         stage.task, n_train=n_train, n_eval=8, seed=cfg.seed,
         tokenizer=tokenizer, max_length=cfg.train.max_length,
-        variant=cfg.trace_variant,
+        variant=cfg.trace_variant, prompt_style=cfg.prompt_style,
     )
     resume = out.exists() and any(out.glob("checkpoint-*"))
     steps = min(20, max(1, (stage.max_steps or 100) // 10))
@@ -214,15 +214,28 @@ def _probe_to_disk(cfg: RunConfig, model, tokenizer, run_dir: Path, name: str) -
         model, tokenizer, cfg.probe_tasks,
         n_eval=cfg.probe.n_eval, max_length=cfg.probe.max_length,
         batch_size=cfg.probe.batch_size, seed=cfg.seed, variant=cfg.trace_variant,
+        prompt_style=cfg.prompt_style, split=cfg.eval_split,
     )
     if cfg.probe.reference_n:
         # Drift on a set the model never trains on. Cheap, and the only metric
         # here that phase 1d's flip-fraction has a direct analogue to.
-        stab = probes.probe_stability(
-            model, tokenizer, n_ref=cfg.probe.reference_n,
-            max_length=cfg.probe.max_length, batch_size=cfg.probe.batch_size,
-            seed=cfg.seed, variant=cfg.trace_variant,
-        )
+        if cfg.kl_scope == "next_token":
+            # 2606.27634's scope: one next-token distribution per example.
+            if cfg.reference == "task_eval":
+                ref, _ = trace.load_task_eval_reference(
+                    cfg.probe_tasks, seed=cfg.seed, variant=cfg.trace_variant)
+            else:
+                ref, _ = trace.load_reference_examples(
+                    n=cfg.probe.reference_n, seed=cfg.seed, variant=cfg.trace_variant)
+            stab = probes.probe_stability_next_token(
+                model, tokenizer, ref, batch_size=cfg.probe.batch_size,
+                max_length=cfg.probe.max_length, prompt_style=cfg.prompt_style)
+        else:
+            stab = probes.probe_stability(
+                model, tokenizer, n_ref=cfg.probe.reference_n,
+                max_length=cfg.probe.max_length, batch_size=cfg.probe.batch_size,
+                seed=cfg.seed, variant=cfg.trace_variant,
+            )
         result["stability"] = asdict(stab)
         if stab.warning:
             result["warnings"] = {**(result.get("warnings") or {}), "stability": stab.warning}

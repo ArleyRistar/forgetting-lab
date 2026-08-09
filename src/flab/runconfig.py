@@ -91,6 +91,18 @@ class RunConfig:
     # the failure that matters, so the digest is checked on load.
     model_sha256: str | None = None
     trace_variant: str = "LLM-CL-Benchmark_5000"
+    # Replication knobs. All hashed: each changes every number a run produces.
+    #   prompt_style  "flab" (ours) | "paper" (2606.27634's chat-template render)
+    #   kl_scope      "answer_tokens" (ours) | "next_token" (theirs: ONE position
+    #                 per example, right after the prompt — the single biggest
+    #                 source of our 4-8x KL gap)
+    #   reference     "lima" (ours) | "task_eval" (theirs: 20% carved from each
+    #                 task's eval split, 48 examples for the _500 variant)
+    #   eval_split    "eval" (ours) | "test" (theirs)
+    prompt_style: str = "flab"
+    kl_scope: str = "answer_tokens"
+    reference: str = "lima"
+    eval_split: str = "eval"
     seed: int = 0
     mode: str = "lora"
     optim: str = "adamw_torch"
@@ -151,6 +163,15 @@ class RunConfig:
                           ("lora.alpha", self.lora.alpha)):
             if val <= 0:
                 raise ValueError(f"{name} must be positive")
+        from flab import prompts, probes as _probes
+        if self.prompt_style not in prompts.STYLES:
+            raise ValueError(f"prompt_style must be one of {prompts.STYLES}")
+        if self.kl_scope not in _probes.KL_SCOPES:
+            raise ValueError(f"kl_scope must be one of {_probes.KL_SCOPES}")
+        if self.reference not in ("lima", "task_eval"):
+            raise ValueError("reference must be 'lima' or 'task_eval'")
+        if self.eval_split not in ("eval", "test"):
+            raise ValueError("eval_split must be 'eval' or 'test'")
         if self.probe.reference_n < 0:
             raise ValueError("probe.reference_n must be >= 0 (0 disables)")
         if isinstance(self.lora.target_modules, str) and self.lora.target_modules != "all-linear":

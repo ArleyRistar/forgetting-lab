@@ -146,6 +146,31 @@ def load_reference_examples(
     return picked, {"requested": n, "used": len(picked), "available": len(rows)}
 
 
+def load_task_eval_reference(
+    tasks: list[str], fraction: float = 0.2, seed: int = 33, variant: str = VARIANT
+) -> tuple[list[dict], dict]:
+    """2606.27634's reference set: a slice carved out of each task's eval split.
+
+    Their `scripts/build_reference_set.py` takes 20% of every task's
+    `eval.json` (seed 33), combines and shuffles — 48 examples for the _500
+    variant (20 FOMC + 20 ScienceQA + 8 NumGLUE-cm). Not a separate corpus.
+
+    Note this makes R *task-distributed* rather than generic: it measures drift
+    on the same distribution being trained on, which is a materially different
+    question from drift on unrelated text (our Lima choice). Both satisfy the
+    paper's stated property that R is disjoint from training data.
+    """
+    rows, per_task = [], {}
+    for t in tasks:
+        pool = _read(t, "eval", variant)
+        take = _order(len(pool), seed)[: max(1, int(round(len(pool) * fraction)))]
+        per_task[t] = len(take)
+        rows.extend({"prompt": pool[i]["prompt"], "answer": pool[i]["answer"],
+                     "task": t} for i in take)
+    order = _order(len(rows), seed)
+    return [rows[i] for i in order], {"used": len(rows), "per_task": per_task}
+
+
 def load_probe_examples(
     name: str, n_eval: int = 200, seed: int = 0, split: str = "eval",
     variant: str = VARIANT,
@@ -185,6 +210,7 @@ def load_task(
     tokenizer=None,
     max_length: int | None = None,
     variant: str = VARIANT,
+    prompt_style: str = "flab",
 ) -> DatasetDict:
     """Load one TRACE task as train/eval splits of formatted text.
 
@@ -212,7 +238,11 @@ def load_task(
             ex = rows[i]
             prompt, cut = _truncate_prompt(ex["prompt"], ex["answer"], tokenizer, max_length)
             n_truncated += cut
-            texts.append(format_example(prompt, ex["answer"]))
+            if prompt_style == "flab":
+                texts.append(format_example(prompt, ex["answer"]))
+            else:
+                from flab import prompts as _p
+                texts.append(_p.render(prompt_style, name, prompt, ex["answer"], tokenizer)[1])
 
         out[split] = Dataset.from_dict({"text": texts})
         stats[split] = {

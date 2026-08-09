@@ -30,7 +30,8 @@ import torch.nn.functional as F
 from flab import trace
 
 IGNORE = -100
-BUCKET = 128  # pad batch widths to a multiple of this; see probe_task
+BUCKET = 128
+KL_SCOPES = ("answer_tokens", "next_token")  # pad batch widths to a multiple of this; see probe_task
 
 
 def _bucket(n: int) -> int:
@@ -87,7 +88,8 @@ def kl_pair(lp_cur, lp_base):
 
 
 def _encode(tokenizer, prompt: str, answer: str, max_length: int,
-            allow_answer_truncation: bool = False):
+            allow_answer_truncation: bool = False,
+            prompt_style: str = "flab", task: str = "FOMC"):
     """Build (input_ids, labels) with an exact prompt/answer boundary.
 
     The two halves are tokenized separately and concatenated rather than
@@ -113,9 +115,28 @@ def _encode(tokenizer, prompt: str, answer: str, max_length: int,
     66% fit at all — and dropping the rest would silently bias the reference
     set toward short-answer examples (measured 2026-08-09).
     """
+    from flab import prompts as _prompts
+
     prompt = trace.pretrim(prompt, max_length)
-    prefix_ids = tokenizer(trace.prefix_of(prompt), add_special_tokens=False)["input_ids"]
-    answer_ids = tokenizer(answer, add_special_tokens=False)["input_ids"]
+    prefix_text, full_text = _prompts.render(prompt_style, task, prompt, answer, tokenizer)
+    prefix_ids = tokenizer(prefix_text, add_special_tokens=False)["input_ids"]
+
+    if prompt_style == "paper":
+        # Theirs: everything after the prompt is a label, INCLUDING the
+        # assistant turn's closing tokens — `labels = [-100]*len(prompt_ids) +
+        # input_ids[len(prompt_ids):]`. Their code requires the prompt tokens to
+        # be a prefix of the full conversation and raises otherwise; we check the
+        # same and fall back rather than mislabel which tokens are the answer.
+        full_ids = tokenizer(full_text, add_special_tokens=False)["input_ids"]
+        answer_ids = (full_ids[len(prefix_ids):]
+                      if full_ids[: len(prefix_ids)] == prefix_ids and len(full_ids) > len(prefix_ids)
+                      else tokenizer(answer, add_special_tokens=False)["input_ids"])
+    else:
+        # Ours: the answer text only, deliberately. Scoring the trailing format
+        # tokens would mix "did it answer correctly" with "did it close the turn
+        # correctly", and it is what every flab number recorded so far means —
+        # changing it would silently invalidate the phase-1a baselines.
+        answer_ids = tokenizer(answer, add_special_tokens=False)["input_ids"]
 
     if allow_answer_truncation:
         # Cap the answer at 3/4 of the window so real prompt context survives.
@@ -141,14 +162,18 @@ def probe_task(
     batch_size: int = 4,
     seed: int = 0,
     variant: str = trace.VARIANT,
+    prompt_style: str = "flab",
+    split: str = "eval",
 ) -> TaskProbe:
     """Mean per-token NLL and token accuracy over one task's held-out answers."""
     t0 = time.perf_counter()
-    examples, stats = trace.load_probe_examples(task, n_eval=n_eval, seed=seed, variant=variant)
+    examples, stats = trace.load_probe_examples(
+        task, n_eval=n_eval, seed=seed, variant=variant, split=split)
 
     encoded, n_trunc, n_dropped = [], 0, 0
     for ex in examples:
-        ids, labels, truncated = _encode(tokenizer, ex["prompt"], ex["answer"], max_length)
+        ids, labels, truncated = _encode(tokenizer, ex["prompt"], ex["answer"], max_length,
+                                         prompt_style=prompt_style, task=task)
         if ids is None:
             n_dropped += 1
             continue
@@ -230,7 +255,8 @@ def probe_task(
 
 def probe_all(model, tokenizer, tasks: list[str], *, n_eval: int = 200,
               max_length: int = 1024, batch_size: int = 4, seed: int = 0,
-              variant: str = trace.VARIANT) -> dict:
+              variant: str = trace.VARIANT, prompt_style: str = "flab",
+              split: str = "eval") -> dict:
     """Probe every task, returning a dict ready to serialise to a boundary file.
 
     Every task is probed at every boundary, including tasks not yet trained on:
@@ -247,7 +273,8 @@ def probe_all(model, tokenizer, tasks: list[str], *, n_eval: int = 200,
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     results = {t: probe_task(model, tokenizer, t, n_eval=n_eval, max_length=max_length,
-                             batch_size=batch_size, seed=seed, variant=variant) for t in tasks}
+                             batch_size=batch_size, seed=seed, variant=variant,
+                             prompt_style=prompt_style, split=split) for t in tasks}
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     warnings = {t: r.warning for t, r in results.items() if r.warning}
@@ -287,6 +314,75 @@ class StabilityProbe:
     base_margin: float | None
     seconds: float
     warning: str | None
+
+
+@torch.no_grad()
+def _next_token_logprobs(model, tokenizer, texts, device, batch_size, base=False):
+    """log-softmax of the next-token distribution after each prompt.
+
+    2606.27634 measures drift at exactly one position per reference example —
+    the last non-padding token of the rendered prompt, i.e. the distribution the
+    model would sample its first answer token from. Left-padding puts that
+    position at the end for every row.
+    """
+    out = []
+    pad = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
+    for i in range(0, len(texts), batch_size):
+        chunk = [tokenizer(t, add_special_tokens=False)["input_ids"] for t in texts[i:i + batch_size]]
+        width = max(len(c) for c in chunk)
+        ids = torch.full((len(chunk), width), pad, dtype=torch.long)
+        attn = torch.zeros((len(chunk), width), dtype=torch.long)
+        for r, c in enumerate(chunk):           # left-pad
+            ids[r, width - len(c):] = torch.tensor(c)
+            attn[r, width - len(c):] = 1
+        ids, attn = ids.to(device), attn.to(device)
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
+            logits = model(input_ids=ids, attention_mask=attn).logits
+        out.append(F.log_softmax(logits[:, -1, :].float(), dim=-1))
+    return torch.cat(out) if out else None
+
+
+@torch.no_grad()
+def probe_stability_next_token(model, tokenizer, examples, batch_size=4,
+                               max_length=512, prompt_style="paper") -> StabilityProbe:
+    """Drift measured their way: one next-token distribution per example."""
+    from flab import prompts
+
+    t0 = time.perf_counter()
+    if not hasattr(model, "disable_adapter"):
+        return StabilityProbe(0, 0, None, None, None, None, None,
+                              time.perf_counter() - t0,
+                              "model is not a PEFT model; nothing was measured")
+    texts = []
+    for ex in examples:
+        prefix, _ = prompts.render(prompt_style, ex.get("task", "FOMC"),
+                                   ex["prompt"], ex["answer"], tokenizer)
+        ids = tokenizer(prefix, add_special_tokens=False)["input_ids"]
+        texts.append(tokenizer.decode(ids[-max_length:]) if len(ids) > max_length else prefix)
+
+    device = next(model.parameters()).device
+    was_training = model.training
+    model.eval()
+    lp_cur = _next_token_logprobs(model, tokenizer, texts, device, batch_size)
+    with model.disable_adapter():
+        lp_base = _next_token_logprobs(model, tokenizer, texts, device, batch_size)
+    if was_training:
+        model.train()
+
+    kl_f, kl_r, dh = kl_pair(lp_cur, lp_base)
+    m = (lambda t: (t[:, 0] - t[:, 1]))(lp_cur.topk(2, -1).values)
+    bm = (lambda t: (t[:, 0] - t[:, 1]))(lp_base.topk(2, -1).values)
+    return StabilityProbe(
+        n_tokens=len(texts),           # one scored position per example
+        n_examples=len(texts),
+        kl_from_base=kl_f.mean().item(),
+        kl_to_base=kl_r.mean().item(),
+        delta_entropy=dh.mean().item(),
+        margin=m.mean().item(),
+        base_margin=bm.mean().item(),
+        seconds=time.perf_counter() - t0,
+        warning=None,
+    )
 
 
 @torch.no_grad()
