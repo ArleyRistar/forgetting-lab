@@ -68,7 +68,7 @@ def main() -> None:
     for r in runs:
         ma = metrics(r, "accuracy", "token_acc")
         mn = metrics(r, "nll", "nll")
-        kl_last = r["bounds"][-1].get("stability", {}).get("kl_from_base")
+        kl_last = r["bounds"][-1].get("stability", {}).get("kl_from_base")  # KL(cur||base), the paper's
         order = "fwd" if r["order"][0] == "FOMC" else "rev"
         rows.append((order, ma, mn, kl_last))
         print(f"{r['name']:<26}{r['seed']:>5}{order:>8}"

@@ -70,6 +70,22 @@ def ensure_no_live_adapter(model) -> None:
         )
 
 
+def kl_pair(lp_cur, lp_base):
+    """(KL(cur||base), KL(base||cur), H(cur)-H(base)) from two log-softmaxes.
+
+    Factored out of the forward-pass plumbing so the arithmetic can be tested
+    against hand-computed distributions. Testing it only through a model hides
+    errors: a small model's output is near-uniform, KL saturates, and the two
+    directions coincide because KL is symmetric to leading order for small
+    divergences — so a direction bug would pass unnoticed.
+    """
+    p_cur, p_base = lp_cur.exp(), lp_base.exp()
+    kl_fwd = (p_cur * (lp_cur - lp_base)).sum(-1)
+    kl_rev = (p_base * (lp_base - lp_cur)).sum(-1)
+    dh = -(p_cur * lp_cur).sum(-1) + (p_base * lp_base).sum(-1)
+    return kl_fwd, kl_rev, dh
+
+
 def _encode(tokenizer, prompt: str, answer: str, max_length: int,
             allow_answer_truncation: bool = False):
     """Build (input_ids, labels) with an exact prompt/answer boundary.
@@ -257,7 +273,15 @@ class StabilityProbe:
     """
     n_tokens: int
     n_examples: int
-    kl_from_base: float | None      # KL(p_base || p_current), nats/token
+    # arXiv 2606.27634 defines drift as KL(p_k || p_0) — current relative to
+    # base. KL is asymmetric and the two directions answer different questions:
+    # kl_from_base penalises the model putting mass somewhere the base did not
+    # (theirs), kl_to_base penalises it abandoning mass the base had. Both are
+    # computed from the same pair of log-softmaxes, so the second is nearly
+    # free, and reporting only one would have made our numbers silently
+    # non-comparable with the paper.
+    kl_from_base: float | None      # KL(p_current || p_base) — the paper's
+    kl_to_base: float | None        # KL(p_base || p_current) — the reverse
     delta_entropy: float | None     # H(p_current) - H(p_base)
     margin: float | None            # top-1 minus top-2 log-prob, current
     base_margin: float | None
@@ -300,8 +324,8 @@ def probe_stability(
     if not encoded or not (can_disable or base_model is not None):
         why = ("no example survived encoding" if not encoded else
                "model is not a PEFT model and no base_model was given")
-        return StabilityProbe(0, 0, None, None, None, None, time.perf_counter() - t0,
-                              f"{why}; nothing was measured")
+        return StabilityProbe(0, 0, None, None, None, None, None,
+                              time.perf_counter() - t0, f"{why}; nothing was measured")
 
     device = next(model.parameters()).device
     pad = tokenizer.pad_token_id or 0
@@ -309,7 +333,7 @@ def probe_stability(
     model.eval()
     encoded.sort(key=lambda p: len(p[0]))
 
-    kl_sum = dh_sum = m_sum = bm_sum = 0.0
+    kl_sum = kl_rev_sum = dh_sum = m_sum = bm_sum = 0.0
     n_tokens = 0
     for i in range(0, len(encoded), batch_size):
         chunk = encoded[i : i + batch_size]
@@ -340,10 +364,11 @@ def probe_stability(
         # and 2.6x that on Llama's 128k.
         lp_cur = F.log_softmax(cur[:, :-1, :][mask].float(), dim=-1)
         lp_base = F.log_softmax(base[:, :-1, :][mask].float(), dim=-1)
-        p_base = lp_base.exp()
 
-        kl_sum += (p_base * (lp_base - lp_cur)).sum(-1).sum().item()
-        dh_sum += (-(lp_cur.exp() * lp_cur).sum(-1) + (p_base * lp_base).sum(-1)).sum().item()
+        kl_f, kl_r, dh = kl_pair(lp_cur, lp_base)
+        kl_sum += kl_f.sum().item()
+        kl_rev_sum += kl_r.sum().item()
+        dh_sum += dh.sum().item()
         m_sum += (lambda t: (t[:, 0] - t[:, 1]).sum().item())(lp_cur.topk(2, -1).values)
         bm_sum += (lambda t: (t[:, 0] - t[:, 1]).sum().item())(lp_base.topk(2, -1).values)
         n_tokens += int(mask.sum())
@@ -352,7 +377,7 @@ def probe_stability(
         model.train()
 
     if n_tokens == 0:
-        return StabilityProbe(0, len(encoded), None, None, None, None,
+        return StabilityProbe(0, len(encoded), None, None, None, None, None,
                               time.perf_counter() - t0,
                               "zero reference tokens scored; nothing was measured")
 
@@ -360,6 +385,7 @@ def probe_stability(
         n_tokens=n_tokens,
         n_examples=len(encoded),
         kl_from_base=kl_sum / n_tokens,
+        kl_to_base=kl_rev_sum / n_tokens,
         delta_entropy=dh_sum / n_tokens,
         margin=m_sum / n_tokens,
         base_margin=bm_sum / n_tokens,

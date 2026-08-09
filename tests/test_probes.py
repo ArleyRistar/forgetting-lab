@@ -4,6 +4,8 @@ CPU-only with a tiny random model — these check the probe's *arithmetic and
 boundaries*, which is where a silent corruption of the loss matrix would come
 from. The real-model cost measurement is a separate GPU step.
 """
+import math
+
 import pytest
 import torch
 
@@ -223,3 +225,47 @@ def test_reference_set_selection_is_deterministic():
     b, _ = trace.load_reference_examples(n=8, seed=0)
     c, _ = trace.load_reference_examples(n=8, seed=1)
     assert a == b and a != c
+
+
+def test_both_kl_directions_are_zero_for_a_fresh_adapter(tiny):
+    model, tok = tiny
+    r = probes.probe_stability(lora_wrap(model), tok, n_ref=4, max_length=256, batch_size=2)
+    assert r.kl_from_base == pytest.approx(0.0, abs=1e-6)
+    assert r.kl_to_base == pytest.approx(0.0, abs=1e-6)
+
+
+def test_kl_arithmetic_against_hand_computed_distributions():
+    """Test the formula directly, not through a model.
+
+    2606.27634 defines drift as KL(p_k || p_0) and KL is asymmetric, so the
+    direction matters. It cannot be verified through the tiny test model: its
+    output is near-uniform, KL saturates around 0.026 even under an 8x weight
+    perturbation, and both directions coincide because KL is symmetric to
+    leading order for small divergences. A direction bug would pass silently.
+    """
+    import torch
+
+    lp_cur = torch.tensor([[0.9, 0.1]]).log()
+    lp_base = torch.tensor([[0.5, 0.5]]).log()
+    kl_f, kl_r, dh = probes.kl_pair(lp_cur, lp_base)
+
+    # KL(cur||base) = .9 ln(.9/.5) + .1 ln(.1/.5)
+    assert kl_f.item() == pytest.approx(0.9 * math.log(1.8) + 0.1 * math.log(0.2), rel=1e-5)
+    # KL(base||cur) = .5 ln(.5/.9) + .5 ln(.5/.1)
+    assert kl_r.item() == pytest.approx(0.5 * math.log(5 / 9) + 0.5 * math.log(5), rel=1e-5)
+    assert kl_f.item() != pytest.approx(kl_r.item(), rel=1e-2), "the two directions must differ"
+    # H(cur) - H(base): a sharper current distribution has lower entropy
+    h_cur = -(0.9 * math.log(0.9) + 0.1 * math.log(0.1))
+    h_base = math.log(2)
+    assert dh.item() == pytest.approx(h_cur - h_base, rel=1e-5)
+    assert dh.item() < 0
+
+
+def test_kl_pair_is_zero_for_identical_distributions():
+    import torch
+
+    lp = torch.tensor([[0.3, 0.7]]).log()
+    kl_f, kl_r, dh = probes.kl_pair(lp, lp)
+    assert kl_f.item() == pytest.approx(0.0, abs=1e-7)
+    assert kl_r.item() == pytest.approx(0.0, abs=1e-7)
+    assert dh.item() == pytest.approx(0.0, abs=1e-7)

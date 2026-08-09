@@ -1005,3 +1005,9 @@ Open:
     control says the harness adds nothing, so those are real — but they were
     one seed, and seed variance is now the binding constraint rather than
     instrumentation.
+11. **Resume does not notice a code change.** `content_hash` covers the config,
+    not the implementation, so editing a probe and re-running into an existing
+    run directory silently skips completed stages and mixes results computed by
+    two different versions. Hit on 2026-08-09 fixing the KL direction; handled
+    by deleting the run dirs. `run.json` already records `git_commit` — the
+    cheap fix is for resume to warn (not refuse) when it differs.
