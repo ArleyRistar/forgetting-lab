@@ -1997,6 +1997,67 @@ Semantic Scholar rate-limited to near-uselessness so coverage came from arXiv
 keyword search, which matches title+abstract only. A paper doing this as a
 secondary experiment would not have surfaced.
 
+## 2026-08-09 — the ternary arm converts at 360M; the FLOAT twin is what OOMs
+
+**Ternary 360M finished**: final loss **5.156** at step 4000, λ=1.0,
+`warmup_completed: true`, 224 BitLinears, 65.5M tokens, **8h 24m** (30224 s),
+7303 MiB steady. It crossed λ=1 at step 800 with no blip. Trajectory: 5.464 at
+2000 → 5.235 at 3000 → 5.156 at 4000. Against the 135M run's final 5.767 and a
+uniform-guess 10.80, the fp32-latent fix holds at 360M and gets better with size.
+
+Then the float twin — the *cheaper* arm, by every intuition — **OOM'd on its
+first backward pass** with the identical command. Measured, three configs, same
+script, peak reserved:
+
+| mode | micro-batch × accum | tokens/step | peak reserved |
+| --- | --- | ---: | ---: |
+| float | 4 × 4 | 16384 | **OOM** (768 MiB alloc failed) |
+| float | 2 × 8 | 16384 | 5850 MiB |
+| ternary | 4 × 4 | 16384 | 6774 MiB |
+
+**The float twin costs more than the ternary twin at equal micro-batch.** The
+cause is autocast's weight cache. Under `bf16=True` with fp32 master weights,
+autocast caches a bf16 copy of each *leaf parameter* it casts. In float mode
+`F.linear` receives `self.weight` directly, so all 314.6M BitLinear-eligible
+weights get a cached bf16 copy (~600 MiB). In ternary mode `F.linear` receives
+`w = ste(self.weight, weight_quant(self.weight), λ)` — a **computed tensor, not a
+leaf parameter** — so the cache is bypassed entirely. The quantised path pays for
+its extra intermediates and still comes out ahead.
+
+Note the direction this cuts: the sweep found reviewers and users repeatedly
+asking why BitNet training is not faster or lighter, and the honest answer is
+that QAT is heavier. That remains true for *compute*. But for *memory under
+autocast* the ternary path is genuinely lighter here, for an incidental reason
+that has nothing to do with ternary weights being small — it is an artefact of
+which tensor autocast decides to cache. Do not present it as a ternary benefit.
+
+**Fix**: `--batch-size 2 --grad-accum 8`, product unchanged at 16384 tokens/step.
+The dataset is a deterministic single-process generator, so the same 16 blocks
+arrive per optimizer step in the same order whether that is 4×4 or 2×8, and with
+fixed-length 1024 blocks the accumulated mean is identical up to float ordering.
+The twins therefore still see the same tokens. Added `--expect-tokens-per-step`
+as a hard assert, because "same tokens" is the entire point of the pair and it
+was previously guaranteed only by remembering to type the same numbers.
+
+Relaunched at 22:20 with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+(1.36 GiB was reserved-but-unallocated in the failing run). Live memory **6357
+MiB**, against 6379 predicted from the probe plus the ternary arm's measured
++529 MiB probe-to-production delta — the calibration transferred.
+
+**The twins are not identical in every respect, and the write-up must say so**:
+they differ in micro-batch (2 vs 4), allocator config, and therefore step time.
+They match on what the experiment needs: model, tokens, token order,
+tokens/step, total steps, LR, schedule, optimizer, seed.
+
+Two corrections to earlier planning numbers:
+
+- The **§4 VRAM table's float row is optimistic** for this setup. It was measured
+  without the autocast weight cache in play at this batch size.
+- **Probe-to-production delta is +529 MiB for this probe**, not the +1.7 GiB
+  recorded against `mem_probe.py`. The delta is a property of the probe, not of
+  the box — a probe that includes gradient checkpointing, 8-bit Adam and real
+  accumulation transfers far better. Prefer this style of probe.
+
 ## Open items — the live list
 
 Closed:

@@ -137,6 +137,18 @@ def main() -> None:
     # 8-bit Adam is mandatory at 360M: measured 2026-08-09, fp32 latents with
     # plain AdamW reserve 98.8% of the card, leaving no headroom at all.
     p.add_argument("--optim", default="adamw_torch")
+    # Micro-batch and accumulation are split out because the float twin needs a
+    # smaller micro-batch than the ternary arm to fit (see --expect-tokens-per-step
+    # below, and the 2026-08-09 autocast-cache entry in LAB-NOTES). The token
+    # stream depends only on their product: the dataset is a deterministic
+    # single-process generator, so 16 blocks per optimizer step arrive in the same
+    # order whether that is 4x4 or 2x8.
+    p.add_argument("--batch-size", type=int, default=ConvertConfig.batch_size)
+    p.add_argument("--grad-accum", type=int, default=ConvertConfig.grad_accum)
+    p.add_argument("--expect-tokens-per-step", type=int, default=None,
+                   help="hard assert on batch*accum*seq_len. The twins are only "
+                        "comparable if they see the same tokens, so the pairing "
+                        "is checked rather than remembered")
     a = p.parse_args()
 
     # Warmup as a fraction of the run, not a fixed step count. The first
@@ -144,8 +156,16 @@ def main() -> None:
     # the recipe's 20% — and, more to the point, 16M tokens against their 2B.
     cfg = ConvertConfig(model=a.model, mode=a.mode, max_steps=a.max_steps,
                         save_steps=a.save_steps, seq_len=a.seq_len,
-                        learning_rate=a.lr,
+                        learning_rate=a.lr, batch_size=a.batch_size,
+                        grad_accum=a.grad_accum,
                         warmup_lambda_steps=max(1, int(a.max_steps * a.warmup_frac)))
+    if a.expect_tokens_per_step is not None \
+            and cfg.tokens_per_step != a.expect_tokens_per_step:
+        raise SystemExit(
+            f"tokens/step is {cfg.tokens_per_step} "
+            f"({cfg.batch_size}x{cfg.grad_accum}x{cfg.seq_len}), expected "
+            f"{a.expect_tokens_per_step} — the twins would not see the same "
+            "tokens, which is the whole point of the pair")
     out = Path(a.output_dir or f"outputs/convert/{a.mode}-{Path(a.model).name}")
     out.mkdir(parents=True, exist_ok=True)
 
