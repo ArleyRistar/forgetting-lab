@@ -1480,6 +1480,103 @@ forgetting better than parameter distance does, and that question does not
 require a *good* ternary model, only a matched pair with a real latent
 trajectory.
 
+## 2026-08-09 — literature sweep after three failed shakedowns: we were missing distillation
+
+Delegated a breadth sweep after v1/v2/v3 all collapsed. It found work that
+changes both the recipe and how H1 has to be framed.
+
+### The recipe is out of date, and the fix is distillation
+
+**BitNet Distillation (arXiv 2510.13998, Microsoft)** — three stages to convert
+an off-the-shelf FP model to 1.58-bit: SubLN insertion, a short continual
+pre-training warm-up, then **dual distillation** (logits + MiniLM-style
+attention-relation). Evaluated on Qwen3 0.6B/1.7B/4B — our exact scale.
+
+**Ternary Mamba (arXiv 2606.18114, Jun 2026)** — QAT from a pretrained
+checkpoint **plus KD** reaches 48.1% zero-shot on a 1.3B model in **102M tokens
+/ 4 H100-hours**, against 150B tokens from scratch. A ~1000× reduction.
+
+**102M tokens is inside our budget** (~390M at 30 GPU-h). Our three shakedowns
+used 25–50M with **plain LM loss and no teacher**. Both papers that succeed at
+this use distillation from the float model; we were doing the one thing neither
+does.
+
+Also **arXiv 2505.08823** — RMSNorm before every linear projection *plus a
+gradual layer-wise quantisation schedule* matches KD pipelines. We added the
+norm and quantise all 210 layers simultaneously; the layer-wise schedule is a
+second lever we have not pulled.
+
+### A named failure mode that is a cousin of our metric
+
+Ternary Mamba reports **"zero-ratio collapse"** — an instability arising *only*
+in QAT-from-pretrained, not from-scratch, caused by **learnable** quantisation
+scales. Their fix is a non-learnable per-group absmean recomputed each forward.
+
+Ours is non-learnable and recomputed each forward already, so that much is
+right, but **theirs is per-group and ours is per-tensor**. Worth checking
+whether our collapse is the same pathology at coarser granularity.
+
+Related: **Tequila (2509.23809)** and **Signed-Zero Ternary (2508.05905)** both
+identify the ternary **deadzone** as the core failure — weights parked at the
+zero boundary get only noisy STE gradients and never escape. A high flip count
+may be trapped weights rattling rather than learning, so phase 1d should report
+zero-state occupancy alongside flip fraction and split flips by transition type
+(±1↔0 versus +1↔−1).
+
+### H1 needs reframing, and a better comparator
+
+**Metaplasticity in binarised NNs (arXiv 2003.03533, Nature Comms 2021)** is the
+closest prior art to our primary hypothesis: latent weight magnitude as a
+flip-resistance variable gives EWC-quality continual learning with no importance
+term. **Flips-as-forgetting is already established in binarised nets** — as a
+*mechanism*, on permuted MNIST, at tiny scale. Our novelty has to be stated as
+ternary rather than binary, LLM scale, and flips as a **predictive measurement**
+rather than a consolidation mechanism. Must cite; anyone who knows this line
+will find it immediately.
+
+**RL's Razor (arXiv 2509.04259)** tests forgetting predictors head to head and
+finds **L2 and spectral-norm distance correlate only weakly** — large shifts
+with no forgetting, forgetting with small movement. Forward-KL to the base model
+is what predicts. So benchmarking flip-fraction against L2 alone would be a
+strawman; **KL-to-base must be a comparator in both arms**. Fortunately phase 1b
+already built exactly that metric.
+
+**"Accuracy is Not All You Need" (arXiv 2407.09141)** already uses **"%flips"**
+to mean *prediction* flips — the fraction of eval samples where the compressed
+model's top-1 differs. Naming collision: ours must be called **weight-state
+flips** or **ternary state changes** or we will be misread.
+
+**Quantization-permanent unlearning (arXiv 2605.15138)** finds per-parameter
+unlearning updates sit **47–828× below the NF4 bin width**, so they never cross
+a boundary and evaporate under compression. Direct quantitative precedent for
+"only state changes count".
+
+### The gaps are real
+
+Explicitly searched and **not found**:
+
+- **Forgetting in ternary/1.58-bit LLMs.** The quantised-CL literature is 4/8-bit
+  PTQ + LoRA, unlearning-under-quantisation, or binarised MLPs on permuted
+  MNIST. Nobody has run sequential tasks on a ternary LLM and measured
+  forgetting.
+- **Weight-state flip fraction as a *predictor* of forgetting.** Closest are BNN
+  flip-flop ratio as an optimisation-stability diagnostic, metaplasticity's
+  flip-resistance as a mechanism, and prediction-flips. Nobody correlates weight
+  flip fraction with forgetting.
+- **A data-matched float twin control.** No conversion paper runs the float
+  control at matched token budget. That control is genuinely ours.
+
+### The warning that matters most
+
+The HF blog **itself** reports that after low-bit fine-tuning on TinyStories,
+WikiText perplexity blew up — general knowledge lost. Other sources report
+ternary conversion of Llama-3.2-1B degrading to incoherent output.
+
+**Our sub-1B setting sits right at the edge where conversion is documented to
+fail outright.** So the ternary arm's baseline capability has to be verified
+*before* any continual-learning phase, or forgetting and failure-to-convert are
+confounded — and every forgetting number would be measuring the wrong thing.
+
 ## Open items — the live list
 
 Closed:
@@ -1540,3 +1637,15 @@ Open:
 16. **Is phase 1c affordable on this box?** The 135M shakedown collapsed to
     chance at 0.25% of the reference token budget and stayed there. Options and
     my read are in the 2026-08-09 shakedown entry; the call is Arley's.
+17. **Add distillation from the float teacher to the conversion.** Both recipes
+    that succeed at our scale (BitDistill 2510.13998, Ternary Mamba 2606.18114)
+    use KD; our three failed shakedowns used plain LM loss. Ternary Mamba
+    reaches a usable model in 102M tokens, inside our budget.
+18. **Rename our metric.** "%flips" already means prediction flips
+    (2407.09141). Use "weight-state flips".
+19. **Add KL-to-base as a forgetting predictor in both arms.** RL's Razor
+    (2509.04259) shows L2 is a weak predictor, so flips-vs-L2 alone is a
+    strawman. Phase 1b already built the metric.
+20. **Verify the ternary twin's baseline capability before phase 2.** Conversion
+    at sub-1B is documented to fail outright; without this check, forgetting and
+    failure-to-convert are confounded.
