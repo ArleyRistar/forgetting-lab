@@ -1402,6 +1402,84 @@ premise.
 This is the restart spec §9 budgets for QAT fiddliness. Cost: ~25 min of 135M
 compute.
 
+## 2026-08-09 — 135M ternary shakedown: model collapses to chance and stays there
+
+Two runs, both 1500 steps at seq 1024, effective batch 16 → **24.6M tokens**,
+1.97 GPU-h each.
+
+| step (lambda) | v1 no norm | v2 with norm |
+| --- | --- | --- |
+| 500 (0.5) | 3.355 | 6.608 |
+| 1000 (1.0) | **11.75** | **10.59** |
+| 1500 (1.0) | — (killed) | **10.744** |
+
+Uniform over the 49152 vocab is **ln(49152) = 10.80**. So v2 ends at chance,
+and the last four logs (10.698, 10.690, 10.665, 10.744) are **flat** — the model
+is not diverging, it has settled into a degenerate solution and 500 steps at
+full quantisation do not pull it out.
+
+### The norm was not the problem
+
+I diagnosed v1's failure as the missing per-layer normalisation and restarted.
+It bought 11.75 → 10.59, which is marginal and still chance. Worse, through
+warmup the norm made things consistently *worse* (6.61 vs 3.36 at lambda 0.5),
+because partially-normalised activations are a scale the pretrained model has
+never seen. And `activation_quant` already rescales after rounding, so its
+conditioning benefit was smaller than I assumed.
+
+I also killed v1 at exactly step 1000 — the instant lambda reached 1, the worst
+point in the schedule — without seeing whether it recovered over its remaining
+500 steps. That was premature. v2 shows what those steps look like: flat.
+
+### The real error: warmup was scaled in steps, not tokens
+
+The plan says, in as many words, to keep the 1000-step lambda warmup rather than
+scale it down, because "it exists to stop the model collapsing when quantisation
+switches on, and that risk does not shrink with a smaller budget."
+
+That reasoning was wrong. Their 1000 steps are at **2M tokens/step = 2B tokens
+of warmup**. Ours are at 16k tokens/step = **16M tokens**. We ramp quantisation
+**125× faster in token terms** — the model gets 125× less data to adapt at each
+level of lambda. The risk does not shrink with a smaller budget, but the
+*defence* does, and I scaled the wrong quantity.
+
+### The budget picture, stated plainly
+
+| | tokens | vs recipe |
+| --- | --- | --- |
+| HF recipe | 10B | 1× |
+| our 30 GPU-h budget | ~390M | 3.9% |
+| this shakedown | 24.6M | **0.25%** |
+
+A shakedown at 0.25% of the reference budget cannot demonstrate conversion
+quality. What it *can* show is stability, and it does: no NaN, no divergence,
+warmup applied to all 210 layers, `final_lambda` 1.0, `warmup_completed` true.
+The machinery works. The question is whether the compute exists to use it.
+
+### Decision needed
+
+Whether phase 1c is affordable at all is Arley's call, not mine. The options:
+
+1. **Retry with token-proportional warmup** — ramp lambda over ~50% of the run
+   rather than a fixed 1000 steps. Addresses a real error above, costs ~2 GPU-h
+   at 135M. Cheapest informative next step.
+2. **Lower the learning rate.** 1e-4 comes from a recipe with a 125× larger
+   batch; at our batch it may be driving the collapse to a degenerate solution.
+3. **Go straight to 360M at the full 30 GPU-h** and accept that the pair will be
+   badly under-converted. Spec §6 1c asks us to *measure and report* the
+   conversion gap, and phase 2 compares each twin against its own
+   post-conversion baseline (§9) — so a weak but *matched* pair may still answer
+   the actual research question.
+4. **Rent a cloud GPU** for the conversion only, as spec §4 permits when an
+   approved experiment needs more than the box.
+
+My read: (1) then (2) are cheap and address identified errors, and are worth
+trying before concluding the budget is the binding constraint. But if both fail,
+(3) is more defensible than it sounds — H1 asks whether flip-fraction predicts
+forgetting better than parameter distance does, and that question does not
+require a *good* ternary model, only a matched pair with a real latent
+trajectory.
+
 ## Open items — the live list
 
 Closed:
@@ -1459,3 +1537,6 @@ Open:
     which their config disables via `enable_thinking=False` and which our
     renderer passes only when the template accepts the kwarg. Worth checking
     before phase 2 reuses this rendering path.
+16. **Is phase 1c affordable on this box?** The 135M shakedown collapsed to
+    chance at 0.25% of the reference token budget and stayed there. Options and
+    my read are in the 2026-08-09 shakedown entry; the call is Arley's.
