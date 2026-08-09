@@ -2215,9 +2215,30 @@ hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
     have >50% "silent weights" never flipping (2407.05257). Our numbers should be
     stated relative to these, not in isolation. Also check our zero fraction
     against Microsoft's "nearly uniform" ≈1/3.
-31. **Scope the forgetting claim to the converted baseline.** The HF blog's
-    finding that a pretrained model and a random init both start at loss ≈13 at
-    λ=1 means conversion may already erase most prior knowledge. Decide explicitly
-    whether we measure forgetting *of the float model's knowledge* (largely gone
-    at t=0) or *of what the converted model relearned* (the defensible one). This
-    changes the post's thesis sentence. **Arley's call.**
+- ~~31. Scope the forgetting claim to the converted baseline.~~ — **decided by
+  Arley, 2026-08-09: we measure forgetting of what the converted model
+  relearned**, not of the float model's original knowledge. Conversion may
+  already erase most of the latter (HF blog: a pretrained model and a random init
+  both start at loss ≈13 at λ=1; our own untrained-λ=1 is 15.95), so a claim about
+  the original knowledge would be mostly measuring conversion damage.
+
+  Consequences, all now binding on the phase-2 card:
+
+  - **t=0 for every forgetting curve is the post-conversion checkpoint**, per twin.
+    This is what spec §9 already specified; the decision makes it the *only*
+    reading, and rules out any comparison against the original SmolLM2-360M as a
+    forgetting number. `conversion_gap.py` reports that comparison separately and
+    it stays documentation, not a result.
+  - **Probes must be validated against the converted model, not the base model.**
+    If the ternary twin is at chance on a task at t=0 it has nothing to forget,
+    and a flat curve would mean "no capability", not "no forgetting" — a null we
+    would misread in exactly the direction that flatters the harness. This makes
+    item 20 a hard gate rather than a nice-to-have: measure the converted twin's
+    capability on each candidate probe *first*, and drop probes where it starts
+    at chance.
+  - **The post's thesis is scoped in one clause** — "a converted, under-trained
+    ternary pair at 360M, measured against its own post-conversion baseline" —
+    and everything inside that scope can then be stated firmly.
+  - The 2512.18934 result (quantised models *retain better* than FP16) is now
+    directly comparable to ours in framing, since it also measures from the
+    quantised model's own starting point rather than from a float ancestor.
