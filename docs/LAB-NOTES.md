@@ -1201,6 +1201,100 @@ system block, so the rendered prompt — and every number from it — changes da
 unless pinned. That silently breaks "re-runnable from a commit hash". Now pinned
 to a fixed date; their implementation has the same exposure.
 
+## 2026-08-09 — phase-1b calibration verdict: drift ordering replicates, the drift→damage link does not
+
+Nine runs in replication mode (3 models × their seeds 33/42/123, paper task
+order), matching 2606.27634's published implementation. `scripts/calib_report.py`.
+
+### Per model, final checkpoint
+
+| model | our KL | their KL | our acc | their acc |
+| --- | --- | --- | --- | --- |
+| gemma-3-1b-it | **11.63 ± 2.51** | 1.623 | 0.586 ± 0.019 | 0.320 |
+| Llama-3.2-1B-Instruct | **3.48 ± 0.07** | 0.630 | 0.488 ± 0.009 | 0.485 |
+| Qwen3.5-0.8B | **3.35 ± 0.10** | 0.300 | 0.717 ± 0.009 | 0.591 |
+
+### What replicates
+
+**The drift ordering, exactly: gemma > llama > qwen.** Three models, correct
+rank order, on a metric whose absolute values are ~5× off. The *relative*
+stability ranking transfers even though the scale does not — which is the more
+transferable claim of the two and the one a different codebase can actually
+check.
+
+**Llama's accuracy, closely.** Final 0.488 vs their 0.485; post-FOMC 0.530 vs
+0.530. Seed variance is tight (±0.009).
+
+**Qwen best in both.** 0.717 vs their 0.591 — highest in each.
+
+### What does not
+
+**The KL→accuracy link, which is the paper's contribution.** Their central
+result is r = −0.497, p < 0.001: models that drift more score worse. We get
+**r = +0.296, p = 0.121** over 27 paired points — not significant, and not
+negative.
+
+The ordering table says the same thing more legibly:
+
+```
+ours by KL desc : gemma > llama > qwen
+ours by acc asc : llama < gemma < qwen
+```
+
+Those two must agree if drift tracks damage. They do not. **Gemma drifts 3.3×
+more than Llama and still scores 0.10 higher.** Their story is "gemma is
+unstable — it drifts most and collapses to 0.320"; we reproduce the drift half
+exactly and get no collapse at all.
+
+So the disagreement is specific rather than general: it is entirely the
+**gemma/llama swap on accuracy**. Their gemma is the worst model by a wide
+margin; ours is comfortably mid-field.
+
+### The honest verdict
+
+**The calibration gate does not pass as specified**, and it should not be
+recorded as passing. What we can say:
+
+- The harness reproduces their *protocol* faithfully enough to hit Llama's
+  accuracy to three decimals at two of three checkpoints.
+- It reproduces their *relative drift ranking* across three models exactly.
+- It does not reproduce the *relationship* those two are supposed to have.
+
+That third point is the paper's actual claim, so this is a failure to replicate
+the contribution while replicating much of the setup. Which is a more useful
+outcome than either a clean pass or a total mismatch: it localises the
+disagreement to one model's accuracy rather than leaving everything in doubt.
+
+### Caveats that could account for the gap, in order of suspicion
+
+1. **Our accuracy is teacher-forced content accuracy; theirs is generative
+   exact-match after normalisation.** For gemma, whose answers we never
+   generate, a model that would ramble in free generation can still score well
+   under teacher forcing. This is the most likely explanation for gemma's
+   inflated accuracy and is *not* something a likelihood probe can fix — it
+   needs the generative eval we deliberately deferred.
+2. **Absolute KL is ~5× theirs** (open item 12), unresolved. The ordering
+   surviving a 5× scale error is reassuring but the scale error is real.
+3. **NumGLUE-cm is scored under the `\boxed{}` prompt**, which instructs
+   step-by-step reasoning while we score the bare answer immediately after the
+   prompt. Content accuracy 0.242 vs token accuracy 0.591 on Llama. Their
+   generative eval extracts from `\boxed{}`; ours cannot.
+
+Given (1), **the gemma/llama swap is plausibly a metric artefact rather than a
+real disagreement about the models.** Resolving it requires generative
+exact-match, which is the deferred half of task 4.
+
+### Seed variance is larger than two seeds suggested
+
+Llama seed 123 gives **BWT +0.1040** where seeds 33 and 42 give −0.0063 and
+−0.0052 — one seed in three flipping the sign of the headline forgetting metric.
+An earlier ±0.0008 from two seeds badly understated this. Pooled BWT across nine
+runs is −0.023 ± 0.064, i.e. **the standard deviation is ~3× the mean.**
+
+Phase 2's ≥3-seed requirement (spec §7) is a floor, not a formality. Combined
+with the null control's ~0 instrumentation noise, **seed variance is now
+conclusively the binding constraint on what this rig can resolve.**
+
 ## Open items — the live list
 
 Closed:
@@ -1250,3 +1344,6 @@ Open:
 13. **Decide `completion_only` for phase 2.** Phase 1a used full-sequence loss;
     the literature default and 2606.27634 both mask the prompt. It changes how
     much a stage drifts, so it changes every forgetting number.
+14. **Generative exact-match eval** is now the highest-value open item. It is the
+    one thing that would settle whether the gemma/llama accuracy swap is real or
+    a teacher-forcing artefact, and it is the deferred half of 1b task 4.
