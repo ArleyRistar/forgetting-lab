@@ -105,8 +105,15 @@ def load_stream(tokenizer, cfg: ConvertConfig):
 
 
 def build(cfg: ConvertConfig):
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg.model, dtype="bfloat16" if torch.cuda.is_available() else None)
+    # fp32 latent weights, NOT bf16. Every reference trains an fp32 master
+    # (nanotron defaults `accumulate_grad_in_fp32: true`), and skipping it is
+    # what flattened the first three shakedowns. Measured on this checkpoint:
+    # bf16's 8 significant bits round an Adam step to *no update at all* for
+    # 85% of weights at lr 1e-4 and 96% at 2e-5, so the model was freezing 24
+    # of every 25 latents per step — and lowering the LR made it worse, not
+    # better. `bf16=True` below still gives mixed-precision compute; fp32
+    # weights under autocast is exactly the reference setup.
+    model = AutoModelForCausalLM.from_pretrained(cfg.model, dtype=torch.float32)
     n_bit = 0
     if cfg.mode == "ternary":
         model, n_bit = bl.convert(model, lambda_=0.0)
@@ -160,6 +167,10 @@ def main() -> None:
             per_device_train_batch_size=cfg.batch_size,
             gradient_accumulation_steps=cfg.grad_accum,
             learning_rate=cfg.learning_rate, lr_scheduler_type="cosine",
+            # Microsoft's 1-bit settings: beta2 0.95 (HF defaults 0.999), no
+            # weight decay (large wd shrinks latent-weight magnitude and makes
+            # ternary weights flip too often), grad clip 1.0 as nanotron.
+            adam_beta2=0.95, weight_decay=0.0, max_grad_norm=1.0,
             warmup_steps=100, bf16=torch.cuda.is_available(),
             gradient_checkpointing=torch.cuda.is_available(),
             logging_steps=50, save_steps=cfg.save_steps, save_total_limit=None,

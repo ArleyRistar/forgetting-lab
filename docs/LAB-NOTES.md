@@ -1577,6 +1577,86 @@ fail outright.** So the ternary arm's baseline capability has to be verified
 *before* any continual-learning phase, or forgetting and failure-to-convert are
 confounded — and every forgetting number would be measuring the wrong thing.
 
+## 2026-08-09 — the shakedowns failed because latent weights were bf16, not fp32
+
+An independent implementation review found a **measured bug-grade error**, and
+it explains all three failures including why lowering the learning rate made
+things worse.
+
+### The bug
+
+`convert.py` loaded the model in bf16 and trained with `bf16=True`, so latent
+weights *and* Adam state were pure bf16 with no fp32 master. Every reference
+keeps an fp32 master — nanotron defaults `accumulate_grad_in_fp32: true` and its
+`FP32GradientAccumulator` makes "a fp32 copy of parameters during
+initialization", stepping the masters and copying down.
+
+Measured on our own SmolLM2-135M checkpoint (mean |w| = 0.148, median 0.119):
+bf16 has 8 significant bits and round-to-nearest with no stochastic rounding, so
+an Adam step of magnitude ≈ lr rounds to **no update at all** for
+
+| lr | weights frozen per step |
+| --- | --- |
+| 1e-4 (v1, v2) | **85.4%** |
+| 2e-5 (v3) | **96.3%** |
+
+v3 was freezing roughly 24 of every 25 latent weights each step. That is exactly
+a mechanism for "settles into a degenerate solution and stays flat" — and it
+explains the most confusing observation of the night: **lowering the LR made it
+worse, because a smaller step is more likely to round to zero.**
+
+Fix: load fp32 and keep `bf16=True`, which is autocast mixed precision over fp32
+weights — the reference setup. At 135M that is ~2.2 GiB, comfortable. At 360M it
+is at the ceiling, so use 8-bit Adam there.
+
+### What the collapse actually was
+
+Reproduced on our code with **zero training**: SmolLM2-135M at λ=1 gives loss
+**15.95** (λ=0.5: 14.48, λ=0: 1.84; uniform is 10.80). So conversion itself
+destroys the model, as documented — the HF blog reports Llama3-8B conversion
+"losses starting at approximately the same value of 13" as random weights, and
+"the introduction of BitLinear layers overwhelms the model into losing all its
+prior information."
+
+That reframes v2: it pulled the model from 15.95 down to ~10.7, the unigram
+floor. It **converted and partially recovered**, then had ~8M tokens at λ=1
+where the recipe had ~8,000M — with 85% of its weights frozen.
+
+The blog's own SmolLM-135M curves train *downward* under full quantisation. Flat
+at chance is not what their 135M looks like, which points at the bf16 bug rather
+than at the token budget.
+
+### Other corrections from the review
+
+- **The λ-interpolated norm was mine, not the recipe's.** Every reference applies
+  the norm unconditionally and accepts a discontinuity at conversion. Ours meant
+  warmup ran on partially-normalised activations no pretrained model has seen —
+  consistent with v2 being worse than v1 at λ=0.5. Now always-on. The phase-1c
+  premise survives: it is about the *weights* being the initial latents, and a
+  norm does not change a weight.
+- **Do not tune the λ schedule at this scale.** The blog: at 135M "the warmup
+  quantization technique didn't yield as much improvement... the curves closely
+  align."
+- **LR should go up, not down.** Microsoft report 1-bit models want *higher* peak
+  LR than fp16. v3's 2e-5 was the wrong direction twice over.
+- **β2 = 0.95** (Microsoft's 1-bit setting; HF defaults 0.999), weight decay 0
+  — large wd shrinks latent magnitudes and makes ternary weights flip too often
+  — and grad clip 1.0.
+- **Loss under 1-bit training is S-shaped**, so intermediate readings do not
+  predict final performance. Relevant to how any shakedown curve gets read.
+
+### Viability, restated
+
+The recipe authors ran SmolLM-135M themselves and its ternary loss trained
+normally, so conversion at this scale is not known-impossible. But the smallest
+published *successful* conversion with quality numbers is Qwen3-0.6B, and it
+needed SubLN + 10B tokens + distillation. Nothing published shows a decent
+converted model below ~10B tokens at any scale.
+
+"Decent" is not our bar. A matched pair that has left chance and acquired a real
+latent trajectory is, and nothing published says that needs billions of tokens
+once the optimizer can actually move the latents.
+
 ## Open items — the live list
 
 Closed:

@@ -119,12 +119,17 @@ class BitLinear(nn.Linear):
             # mathematically identical but not bitwise, and the premise of the
             # conversion is bitwise equality at the moment of conversion.
             return F.linear(x, self.weight, self.bias)
-        # Normalise, then quantise — with the norm interpolated by lambda too,
-        # so lambda=0 stays exactly the float layer. The recipe applies the norm
-        # unconditionally; doing that here would mean the conversion starts from
-        # a function that is not the float model, and phase 1c's premise is that
-        # it is.
-        xn = x + self.lambda_ * (rms_norm(x) - x)
+        # Norm always on, as every reference does — not interpolated by lambda.
+        #
+        # Interpolating preserved bit-identity of the *function* at lambda=0,
+        # but phase 1c's premise is about the *weights*: at conversion the float
+        # weights are the initial latents, and applying a norm does not change a
+        # weight. Interpolating also meant every warmup step ran on
+        # partially-normalised activations no pretrained model has seen, which
+        # is consistent with v2 being worse than v1 at lambda=0.5 (6.61 vs 3.36).
+        # The reference accepts a discontinuity at conversion and records it; so
+        # do we — untrained loss at lambda=1 on SmolLM2-135M is 15.95.
+        xn = rms_norm(x)
         x = ste(xn, activation_quant(xn), self.lambda_)
         w = ste(self.weight, weight_quant(self.weight), self.lambda_)
         return F.linear(x, w, self.bias)

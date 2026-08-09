@@ -65,13 +65,38 @@ def test_warmup_schedule():
 
 
 def test_lambda_zero_is_bit_identical_to_the_original_linear():
-    """Phase 1c's premise: at conversion, the float weights ARE the initial
-    latent weights. If this is not bitwise equal, that premise is false."""
+    """Phase 1c's premise: at conversion, the float WEIGHTS are the initial
+    latent weights.
+
+    The lambda=0 fast path skips quantisation and the norm entirely, so it is
+    still exactly the float layer. Note the premise is about weights, not the
+    function — see `test_norm_is_always_on_not_interpolated`: for lambda>0 the
+    norm applies unconditionally, as every reference does, and the resulting
+    discontinuity at conversion is recorded rather than engineered away."""
     torch.manual_seed(0)
     lin = nn.Linear(32, 16)
     bit = bl.BitLinear.from_linear(lin, lambda_=0.0)
     x = torch.randn(8, 32)
     assert torch.equal(bit(x), lin(x))
+    assert bit.weight is lin.weight          # the premise that actually matters
+
+
+def test_norm_is_always_on_not_interpolated():
+    """v2 interpolated the norm with lambda, so warmup ran on
+    partially-normalised activations no pretrained model has seen — and was
+    worse than v1 at lambda=0.5 (6.61 vs 3.36). Every reference applies it
+    unconditionally."""
+    import torch.nn.functional as F
+
+    torch.manual_seed(0)
+    lin = nn.Linear(64, 32)
+    x = torch.randn(4, 64) * 8
+    half = bl.BitLinear.from_linear(lin, lambda_=0.5)
+    # at any lambda > 0 the input is fully normed before quantising
+    xn = bl.rms_norm(x)
+    wq = bl.ste(lin.weight, bl.weight_quant(lin.weight), 0.5)
+    want = F.linear(bl.ste(xn, bl.activation_quant(xn), 0.5), wq, lin.bias)
+    assert torch.allclose(half(x), want, atol=1e-5)
 
 
 def test_lambda_one_actually_ternarises():
@@ -230,8 +255,7 @@ def test_norm_is_applied_inside_the_layer_not_just_by_the_block():
 
 
 def test_lambda_zero_still_bit_identical_after_adding_the_norm():
-    """The norm is interpolated by lambda so conversion still starts exactly at
-    the float model — the premise phase 1d depends on."""
+    """lambda=0 takes the fast path, so it is still exactly the float layer."""
     torch.manual_seed(0)
     lin = nn.Linear(32, 16)
     bit = bl.BitLinear.from_linear(lin, lambda_=0.0)
