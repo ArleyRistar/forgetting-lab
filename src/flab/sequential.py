@@ -51,28 +51,29 @@ def verify_model_digest(cfg: RunConfig) -> str | None:
 
     # Repos do not agree on the weight filename: Llama and Gemma ship
     # `model.safetensors`, Qwen3.5-0.8B ships
-    # `model.safetensors-00001-of-00001.safetensors`. Look for the standard
-    # name, then fall back to the single safetensors file in the snapshot —
-    # and refuse if that is ambiguous rather than hashing an arbitrary shard.
-    path = try_to_load_from_cache(cfg.model, "model.safetensors")
-    if not isinstance(path, str):
-        anchor = try_to_load_from_cache(cfg.model, "config.json")
-        if not isinstance(anchor, str):
-            raise RuntimeError(f"cannot verify {cfg.model}: nothing in cache")
-        found = sorted(Path(anchor).parent.glob("*.safetensors*"))
-        if len(found) != 1:
-            raise RuntimeError(
-                f"cannot verify {cfg.model}: expected one safetensors file, "
-                f"found {len(found)} — pin a digest per shard or drop model_sha256")
-        path = str(found[0])
-    got = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    if got != cfg.model_sha256:
-        raise RuntimeError(
-            f"{cfg.model} weights do not match the pinned digest.\n"
-            f"  expected {cfg.model_sha256}\n  got      {got}\n"
-            "Refusing to train on unverified weights."
-        )
-    return got
+    # `model.safetensors-00001-of-00001.safetensors` alongside an index json.
+    # Rather than guess the name, hash every weight file and require the pinned
+    # digest to be among them — naming is incidental, the bytes are the point.
+    anchor = try_to_load_from_cache(cfg.model, "config.json")
+    if not isinstance(anchor, str):
+        raise RuntimeError(f"cannot verify {cfg.model}: nothing in cache")
+    # Strict suffix: `*.safetensors*` also matches `model.safetensors.index.json`,
+    # which is metadata, not weights, and made this look ambiguous when it wasn't.
+    found = sorted(Path(anchor).parent.glob("*.safetensors"))
+    if not found:
+        raise RuntimeError(f"cannot verify {cfg.model}: no .safetensors in the snapshot")
+
+    seen = {}
+    for f in found:
+        seen[f.name] = hashlib.sha256(f.read_bytes()).hexdigest()
+        if seen[f.name] == cfg.model_sha256:
+            return seen[f.name]
+    listing = "\n".join(f"    {n}  {h}" for n, h in seen.items())
+    raise RuntimeError(
+        f"{cfg.model} weights do not match the pinned digest.\n"
+        f"  expected {cfg.model_sha256}\n  found:\n{listing}\n"
+        "Refusing to train on unverified weights."
+    )
 
 
 def _load_base(cfg: RunConfig):
