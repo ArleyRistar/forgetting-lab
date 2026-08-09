@@ -1820,11 +1820,175 @@ Two claims from the same sweep worth pre-empting rather than discovering later:
 Context for the eventual write-up: nothing in the archived record covers
 catastrophic forgetting in low-bit models, no BitNet training hyperparameters
 appear anywhere, and every 2026 ternary tool named is inference-only. The one
-2026 ternary release with a continued-learning feature (deepgrove's
-Maple-Preview, 20B) drew exactly our question in its top comment — "how much
-does it degrade base performance?" — and it went unanswered. Caveat: these are
-anonymous posts without reproduced numbers, and Wayback only indexes what it
+2026 low-bit release with a continued-learning feature (deepgrove's
+Maple-Preview, 20B) drew exactly our question in a top **Reddit** comment — "how
+much does it degrade base performance?" — and it went unanswered. Caveat: these
+are anonymous posts without reproduced numbers, and Wayback only indexes what it
 crawled, so absence means absent from the reachable archive.
+
+**Two corrections to this entry, 2026-08-09, from a later sweep:**
+
+1. **Maple-Preview may not be ternary.** The Reddit post title says "ternary-weight",
+   but its HF config reads `bits: 2, group_size: 128, mode: affine` (lm_head 4-bit
+   g64), found by a user in `deepgrove/maple-preview` discussion #3. Unresolved —
+   possibly a 2-bit GGUF of a ternary base, possibly not ternary at all. **Do not
+   cite it as a ternary release without checking the base model's own format**; a
+   reader will correct it publicly.
+2. **The "how much does it degrade" question is a Reddit comment, not an HF Hub
+   one.** A second agent read all three ternary-model discussion tabs in full and
+   did not find it there. Attribute it to r/LocalLLaMA or not at all.
+
+## 2026-08-09 — the reference recipes, verbatim; and three challenges to our framing
+
+Two sweeps (GitHub issues + OpenReview; arXiv/Semantic Scholar + HF Hub) found
+what Reddit did not: the actual published hyperparameters. Every number below was
+quoted from a source the agent read; arXiv IDs were verified to resolve to the
+claimed titles (`https://export.arxiv.org/api/query?id_list=…` — note **https**,
+plain http is blocked from this box, which silently returned empty for all eight
+IDs on the first attempt and looked like eight fabricated citations).
+
+### The recipes we are implicitly claiming to follow
+
+Microsoft's `The-Era-of-1-bit-LLMs__Training_Tips_Code_FAQ.pdf` (in
+`microsoft/unilm/bitnet`), Table 2:
+
+| model | size | LR | weight decay | warmup | Adam β |
+| --- | --- | --- | --- | --- | --- |
+| BitNet b1.58 | 700M | 1.5e-3 → 1e-3 | 0.1 → 0 | 375 | (0.9, 0.95) |
+| BitNet b1.58 | 1.3B–3.9B | 1.2e-3 → 8e-4 | 0.1 → 0 | 375 | (0.9, 0.95) |
+| LLaMA (float) | 700M | 2.5e-4 | 0.1 | 375 | (0.9, 0.95) |
+| LLaMA (float) | 1.3B–3B | 2.0e-4 | 0.1 | 375 | (0.9, 0.95) |
+
+Batch **1M tokens**, **100B tokens**, seq 2048. Two things matter here:
+
+- **The ternary LR is 6× the float LR at the same size**, and we are at 1e-4 —
+  ~15× below their 700M ternary LR. This **reframes the bf16 finding** (see the
+  2026-08-09 fp32-latents entry): at a 1M-token batch and lr 1.5e-3 the per-step
+  update is orders of magnitude larger and bf16 would not round it away. Our
+  result is real but conditional on *bf16 + small batch + lr 1e-4*. Report it as
+  an update-survival rate over (dtype × LR), never as "bf16 latents are broken".
+- **They use a different LR per arm.** Nielsen et al. (below) explicitly use the
+  *same* LR for both. So "same LR for both twins" is a defensible choice with a
+  citation, but it is a choice, and it must be stated — otherwise a reviewer says
+  the ternary arm was starved. Open item 26.
+
+Nielsen, Schneider-Kamp & Galke, ACL 2025 Findings
+(https://aclanthology.org/2025.findings-acl.694/, arXiv 2502.11895) — the closest
+published experiment to ours, continued 16→1.58-bit QAT on OLMo-1B/Dolma:
+AdamW, cosine+warmup, `learning_rate: 4.0e-4`, `weight_decay: 0.1`,
+`betas: [0.9, 0.95]`, `t_warmup: 2000`, `precision: amp_bf16`, batch 4M tokens,
+10k steps = 40B tokens. Their transition results (final loss):
+
+| condition | loss |
+| --- | ---: |
+| 16-bit from scratch, 10k steps | 2.95 |
+| continue from 2k 16-bit steps | **3.088** (best ternary) |
+| continue from 4k | 3.097 |
+| continue from 6k | 3.12 |
+| full 1.58-bit from scratch | 3.15 |
+
+Their recommendation: train 16-bit on **20–40%** of the data first, then quantise.
+Converting a *fully* trained model — ours — sits past the end of that curve, which
+is monotonically worse the later you switch. Worth acknowledging directly.
+
+### Three challenges to our framing, in descending severity
+
+1. **"Conversion wipes the prior information" — the challenge to the whole
+   premise.** The HF blog (`1_58_llm_extreme_quantization`) reports pretrained
+   Llama-3 weights (normal, std 0.013) and a random init (mixture, scales 50.25
+   and 402) *"started at approximately the same value of 13"*, concluding **"the
+   Llama 3 model loses all of its prior information when quantization is
+   introduced."** Our own untrained-at-λ=1 loss of 15.95 on SmolLM2-135M agrees.
+   If conversion already erases most of what was there, then "catastrophic
+   forgetting in a ternary model" must be scoped to *what the converted model
+   relearned*, not to the float model's original knowledge. This is the single
+   most important framing decision in the project and it is Arley's call. It is
+   also the honest answer to his earlier question of whether the premise is wrong:
+   the premise is not wrong, but the baseline is the converted model, not the
+   original.
+2. **The STE gradient objection — the attack our mechanism will face.** Tequila
+   (arXiv 2509.23809, ICLR 2026 sub. 9324) names **"deadzone trapping"**: weights
+   stuck at the ternary boundary receiving only noisy gradients. Its reviewer
+   SR3yFq8dQH (soundness 1) refutes it verbatim: *"if using a traditional STE
+   estimation scheme, the calculation of the original weight gradient ∂L/∂wᵢ
+   should be identical to the quantized weight gradient… when the original weight
+   lies within the range (–δ, δ)… the weight gradient would be the same as outside
+   the deadzone."* **Under plain STE, gradients do not distinguish the deadzone.**
+   Any claim we make about near-threshold weights being special must therefore be
+   about the *forward* contribution and the *moving boundary*, not gradient
+   magnitude — and must be shown empirically, not argued. Our hypothesis survives
+   this only in its decoupling form: |Δ effective| decouples from |Δ latent|.
+3. **The unfair-comparison charge.** Spectra's reviewer Ta25rZvTRC (ICLR 2025
+   sub. 11310): *"Both models were trained with 300B tokens, and the training loss
+   does not appear to have fully converged… the FP model may require more tokens
+   due to its larger model capacity."* At 66M tokens neither of our twins has
+   converged. State the matching axis explicitly — identical tokens, identical
+   order, identical steps — and name what is **not** matched: LR, convergence
+   state, effective capacity.
+
+### Numbers we can now compare against
+
+- **Published per-step ternary flip rate: ~0.05%** (BitNet) and ~0.04% (ternary
+  DQT), vs up to 8% for 8-bit — from "Direct Quantized Training with Stochastic
+  Rounding" (arXiv 2412.04787) §5.2, measured at step 2000. This is a direct
+  baseline for our headline metric, which otherwise reports into a vacuum.
+  Same paper §5.3 partially undercuts the small-update story: suppressing the
+  smallest 20% of updates had *"minimal impact"* on final loss at 130M.
+- **>50% of BNN weights never change sign during training** ("silent weights",
+  arXiv 2407.05257) — the binary-side anchor for a flip-rate result.
+- **Expected zero fraction ≈ 1/3**: Microsoft reports the {-1,0,1} distribution is
+  *"nearly uniform"*, and that raising γ to get more zeros *hurt* performance.
+  A cheap sanity check on our absmean implementation.
+
+### Tooling that exists and that we did not know about
+
+- `tiiuae/onebitllms` (maintained, Triton kernels, `pip install onebitllms`) —
+  a QAT BitLinear to validate ours against, plus `convert_to_bf16`. TII claim
+  BitNet checkpoints revert to bf16 *"with minimal performance degradation"*,
+  which if true is a cheap and striking experiment: revert our ternary twin to
+  bf16 and see whether the forgetting signature survives.
+- `schneiderkamplab/bitlinear` — the library used by the ACL 2025 paper above,
+  so using it makes our numbers directly comparable to theirs.
+- `huggingface/nanotron`'s 1.58-bit support is **an unmerged PR** (#180, still
+  open) — the framework behind the famous HF result was never upstreamed.
+- Do **not** use `kyegomez/BitNet`: open correctness bugs, including "Is
+  activation actually quantized?" and "Expected BitLinear weight to be 1 or -1".
+
+### Prior art: the verdict is that we are still novel, with must-cites
+
+Nothing measures forgetting in a ternary LLM; nothing uses a data-matched float
+twin as a *forgetting* control; nothing attributes forgetting to weight-state
+flips under a moving threshold. Must cite, or a reviewer finds them immediately:
+
+- **Laborieux et al., "Synaptic Metaplasticity in Binarized Neural Networks"**
+  (arXiv 2003.03533; a second entry 2101.07592) — our mechanism, one bit lower,
+  five years earlier: hidden real-valued weights as metaplastic variables, weights
+  far from the threshold made to resist flipping, to reduce forgetting. Our
+  differentiators: ternary not binary, LLM not vision, **measurement not
+  mitigation**, and a data-matched control they lack.
+- **Helwegen et al., "Latent Weights Do Not Exist"** (arXiv 1906.02107, NeurIPS
+  2019) — latent weights are inertia, not weights; Bop optimises flip decisions
+  directly. This is the licence for talking about weight-*state* flips at all.
+- **"When Less is More: 8-bit Quantization Improves Continual Learning in LLMs"**
+  (arXiv 2512.18934) — **points the opposite way to our intuition**: quantised
+  models beat FP16 on retention, framed as quantisation noise acting as implicit
+  regularisation. Not a duplicate (PTQ precision levels, no ternary, no twin, no
+  flip mechanism) but we must engage with it or look uninformed.
+- **Spectra / TriLM** (arXiv 2407.12327, 2506.23025) — already owns the
+  *matched-precision-suite* idea (FloatLM and TriLM on the same data). Our twin is
+  therefore **not** a novel control design; the novelty is applying it to
+  forgetting. Their scaling result (TriLMs gain more from data than from
+  parameters) is also the honest defence of our small token budget.
+- **Tequila** (2509.23809) for "deadzone trapping" vocabulary; **TRACE**
+  (2310.06762) for the benchmark; **Ternary Mamba** (2606.18114) for
+  "zero-ratio collapse", a moving-threshold pathology in QAT-from-pretrained.
+- Name-collision trap: "Ternary Feature Masks" (2001.08714) is continual learning
+  with ternary *masks*, not ternary weights. Different thing.
+
+Caveat on the whole prior-art section: abstracts only, no paper bodies read;
+Semantic Scholar rate-limited to near-uselessness so coverage came from arXiv
+keyword search, which matches title+abstract only. A paper doing this as a
+secondary experiment would not have surfaced.
 
 ## Open items — the live list
 
@@ -1953,3 +2117,39 @@ hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
     the best low-bit point" is out of scope (spec §10). Our contribution is the
     forgetting mechanism and the data-matched float-twin control, which is
     bit-width-agnostic in method. Say that once, in the motivation section.
+26. **Decide and state the LR policy across twins.** Microsoft uses a ternary LR
+    6× the float LR at the same size; Nielsen et al. use the same LR for both.
+    Either is defensible with a citation; silence is not. Our 1e-4 is ~15× below
+    Microsoft's 700M ternary LR, so "the ternary arm was starved" is the obvious
+    attack. Decide before the phase-2 card, and record which paper we followed.
+27. **Check the double-normalisation.** Microsoft's conversion recipe step 2 is
+    *"remove RMSNorm before attention and SwiGLU because BitLinear has built-in
+    RMSNorm"*. We do not: `convert.py` replaces the linears and leaves the block's
+    `input_layernorm` / `post_attention_layernorm` in place, so `q/k/v/gate/up`
+    are normed twice (learnable, then our parameter-free one) while `o/down` get
+    ours alone — which was the v1 fix. Our second norm partially undoes the
+    learned gain. It demonstrably works, so this is a deviation to *measure and
+    report*, not to panic about, but it must not be presented as "we followed the
+    reference recipe". Cheap ablation at 135M.
+28. **Ablate the λ warmup — it may be doing nothing.** The HF blog measured on
+    SmolLM-135M that λ warmup and immediate full quantisation gave curves that
+    *"closely align, and the resulting perplexities aren't significantly
+    different"*; Nielsen et al. found transition spikes harmless and their
+    mitigations gave no final-quality gain. We spend 20% of every run on this.
+29. **8-bit Adam with ternary QAT is unvalidated by anyone.** The sweep found
+    zero discussion of whether bitsandbytes 8-bit optimizer state interacts badly
+    with latent weights near the absmean threshold — where quantisation error in
+    the *optimizer* could flip effective weights. We depend on it for the 360M
+    memory budget. At minimum, a 135M fp32-Adam vs 8-bit-Adam flip-rate
+    comparison before flips become the headline metric.
+30. **Report flip rate against the published baseline.** BitNet's measured
+    per-step ternary flip rate is ~0.05% (DQT arXiv 2412.04787 §5.2); binary nets
+    have >50% "silent weights" never flipping (2407.05257). Our numbers should be
+    stated relative to these, not in isolation. Also check our zero fraction
+    against Microsoft's "nearly uniform" ≈1/3.
+31. **Scope the forgetting claim to the converted baseline.** The HF blog's
+    finding that a pretrained model and a random init both start at loss ≈13 at
+    λ=1 means conversion may already erase most prior knowledge. Decide explicitly
+    whether we measure forgetting *of the float model's knowledge* (largely gone
+    at t=0) or *of what the converted model relearned* (the defensible one). This
+    changes the post's thesis sentence. **Arley's call.**
