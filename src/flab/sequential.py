@@ -172,6 +172,7 @@ def _train_stage(cfg: RunConfig, model, tokenizer, index: int, out: Path) -> int
         stage.task, n_train=n_train, n_eval=8, seed=cfg.seed,
         tokenizer=tokenizer, max_length=cfg.train.max_length,
         variant=cfg.trace_variant, prompt_style=cfg.prompt_style,
+        completion_only=cfg.train.completion_only,
     )
     resume = out.exists() and any(out.glob("checkpoint-*"))
     steps = min(20, max(1, (stage.max_steps or 100) // 10))
@@ -192,6 +193,7 @@ def _train_stage(cfg: RunConfig, model, tokenizer, index: int, out: Path) -> int
         save_steps=50,          # mid-stage crash insurance...
         save_total_limit=2,
         eval_strategy="no",     # ...but never speculatively evaluated (spec §6 1a).
+        completion_only_loss=cfg.train.completion_only or None,
         optim=cfg.optim if cuda else "adamw_torch",
         report_to=[],
         seed=cfg.seed,

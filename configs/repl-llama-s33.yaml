@@ -47,6 +47,7 @@ train:
   grad_accum: 8               # = 16 effective
   max_length: 512
   lr_scheduler: constant      # they use NO scheduler...
+  completion_only: true       # they mask the prompt; phase 1a did not
   warmup_steps: 0             # ...and no warmup
 
 probe:

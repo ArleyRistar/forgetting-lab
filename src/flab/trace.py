@@ -211,6 +211,7 @@ def load_task(
     max_length: int | None = None,
     variant: str = VARIANT,
     prompt_style: str = "flab",
+    completion_only: bool = False,
 ) -> DatasetDict:
     """Load one TRACE task as train/eval splits of formatted text.
 
@@ -233,18 +234,21 @@ def load_task(
         if want is not None:
             take = take[: min(want, len(rows))]
 
-        n_truncated, texts = 0, []
+        n_truncated, texts, pairs = 0, [], []
         for i in take:
             ex = rows[i]
             prompt, cut = _truncate_prompt(ex["prompt"], ex["answer"], tokenizer, max_length)
             n_truncated += cut
-            if prompt_style == "flab":
-                texts.append(format_example(prompt, ex["answer"]))
-            else:
-                from flab import prompts as _p
-                texts.append(_p.render(prompt_style, name, prompt, ex["answer"], tokenizer)[1])
+            from flab import prompts as _p
+            prefix, full = _p.render(prompt_style, name, prompt, ex["answer"], tokenizer)
+            texts.append(full)
+            # TRL masks the prompt automatically for prompt/completion datasets,
+            # which is what their label construction does by hand.
+            pairs.append((prefix, full[len(prefix):]))
 
-        out[split] = Dataset.from_dict({"text": texts})
+        out[split] = (Dataset.from_dict({"prompt": [a for a, _ in pairs],
+                                         "completion": [b for _, b in pairs]})
+                      if completion_only else Dataset.from_dict({"text": texts}))
         stats[split] = {
             "requested": want,
             "used": len(texts),

@@ -62,6 +62,13 @@ class TrainSpec:
     max_length: int = 1024
     lr_scheduler: str = "cosine"
     warmup_steps: int | None = None   # None -> min(20, max(1, steps // 10))
+    # Mask the prompt and train only on the answer. 2606.27634 does this
+    # (`labels = [-100]*len(prompt_ids) + input_ids[len(prompt_ids):]`); phase
+    # 1a did not, training on every token including the prompt. That is a real
+    # methodological difference — full-sequence loss also teaches the prompt
+    # distribution, which drives substantially more drift — so it is explicit
+    # and hashed rather than silently changed under existing results.
+    completion_only: bool = False
 
 
 @dataclass(frozen=True)
