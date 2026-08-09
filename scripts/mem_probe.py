@@ -54,12 +54,33 @@ def main() -> None:
     p.add_argument("--dtype", default="bfloat16")
     p.add_argument("--optim", default="adamw_torch")
     p.add_argument("--max-steps", type=int, default=20)
+    p.add_argument("--ternary", action="store_true",
+                   help="convert to BitLinear first — measures the QAT rows in "
+                        "spec section 4 that are still computed, not measured")
+    p.add_argument("--lambda-", type=float, default=1.0, dest="lam",
+                   help="quantisation strength; 1.0 is the steady-state cost")
     args = p.parse_args()
 
     data = load_smoltalk()
     probe = MemProbe()
+
+    model_arg = MODEL
+    if args.ternary:
+        # Build and convert explicitly so the materialised quantised tensor is
+        # in the graph. Passing a model object means model_init_kwargs must not
+        # be set, so dtype is applied here instead.
+        import torch as _t
+        from transformers import AutoModelForCausalLM
+
+        from flab import bitlinear as bl
+
+        dt = {"bfloat16": _t.bfloat16, "float32": _t.float32}[args.dtype]
+        model_arg = AutoModelForCausalLM.from_pretrained(MODEL, dtype=dt)
+        model_arg, n_bit = bl.convert(model_arg, lambda_=args.lam)
+        print(f"converted {n_bit} linears to BitLinear at lambda={args.lam}")
+
     trainer = SFTTrainer(
-        model=MODEL,
+        model=model_arg,
         args=SFTConfig(
             output_dir=f"outputs/memprobe/{args.dtype}-{args.optim}",
             max_steps=args.max_steps,
@@ -79,7 +100,7 @@ def main() -> None:
             save_strategy="no",
             report_to=[],
             seed=0,
-            model_init_kwargs={"dtype": args.dtype},
+            **({} if args.ternary else {"model_init_kwargs": {"dtype": args.dtype}}),
         ),
         train_dataset=data["train"],
         callbacks=[probe],
@@ -93,6 +114,8 @@ def main() -> None:
     print("PROBE " + json.dumps({
         "dtype": args.dtype,
         "optim": args.optim,
+        "ternary": args.ternary,
+        "lambda": args.lam if args.ternary else None,
         "n_params": n,
         "warning": None if probe.grads else "grad hook never fired - grads undercounted",
         **probe.rows,

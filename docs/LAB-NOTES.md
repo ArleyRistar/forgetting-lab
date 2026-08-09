@@ -1728,6 +1728,47 @@ scaling by parameters alone, so the 30 GPU-h budget buys roughly 200M tokens for
 the pair, or 100M each. fp32 latents at 360M sit at the VRAM ceiling (16 B/param
 = 5.8 GiB before activations), so the pair needs 8-bit Adam.
 
+## 2026-08-09 — ternary QAT memory measured at 360M (closes open item 7)
+
+`scripts/mem_probe.py --ternary`, which now converts to BitLinear before probing
+so the materialised quantised tensor is actually in the graph. SmolLM2-360M,
+λ=1.0, batch 4 × seq 1024, gradient checkpointing. 224 linears converted
+(32 layers × 7).
+
+| configuration | B/param | activations | peak reserved | % of 7.66 GiB card |
+| --- | --- | --- | --- | --- |
+| ternary QAT, fp32 latent + fp32 Adam | **16.00** | 1384 MiB | **7386 MiB** | **98.8%** |
+| ternary QAT, fp32 latent + 8-bit Adam | **10.81** | 1320 MiB | **5314 MiB** | **71%** |
+| *float* fp32 + AdamW (2026-08-08) | 16.00 | 1481 MiB | 7758 MiB | 99.1% |
+
+### The §4 estimates were wrong in an interesting direction
+
+Spec §4 estimated the ternary rows at **~18 B/param (fp32 Adam)** and **~9
+(8-bit)**, on the reasoning that ternary QAT "adds the materialised quantized
+tensor" on top of the float cost. Measured: **16.00 and 10.81** — the fp32 row is
+*lower* than estimated and identical to float, and the 8-bit row is *higher*.
+
+Both deviations have the same cause. The quantised weight tensor is created
+inside the forward pass, so it is an **activation, not a parameter** — it never
+touches bytes-per-param. And with gradient checkpointing it is recomputed rather
+than held, so all 224 of them cost only what one layer's worth costs at a time.
+Ternary activations came out *below* float's (1384 vs 1481 MiB), because the
+quantised weights and int8-range activations are cheaper to hold than the
+autocast bf16 weight cache the float run pays for.
+
+The 8-bit row is higher than estimated for the reason already recorded on
+2026-08-08: bitsandbytes keeps the embedding's optimizer state in fp32, and the
+49k-vocab embedding is 13% of a 360M model. 10.81 here versus 6.81 for the float
+8-bit run is the fp32 latent weights (4 B/param instead of 2) plus fp32 grads.
+
+### Consequence for the 360M pair
+
+fp32 latents with plain AdamW is **98.8% of the card** — no headroom for a longer
+sequence, a bigger batch, or a concurrent probe. **8-bit Adam is not optional at
+360M**, and at 71% it leaves room to work in.
+
+Every row in the §4 table is now measured rather than computed.
+
 ## Open items — the live list
 
 Closed:
@@ -1750,9 +1791,6 @@ Open:
 5. **Does the unmerged-adapter 1.89× penalty also hit batched loglikelihood
    tasks?** Likely much smaller (compute-bound, not decode-bound). If it does,
    add adapter-merging to the eval wrapper.
-7. **Measure the ternary QAT rows directly.** Everything measured so far is
-   float training; the materialised-quantized-tensor term is still computed.
-   Naturally folds into the 1c recipe shakedown at 135M.
 8. **Reconcile the two derate numbers** — §4 budgets 1.9x, the clock-cap A/B
    measured 1.26x over 11 min of full fine-tuning at 87 C. Different workloads;
    until reconciled, keep budgeting at 1.9x (the conservative one).
