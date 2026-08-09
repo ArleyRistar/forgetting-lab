@@ -2058,6 +2058,48 @@ Two corrections to earlier planning numbers:
   the box — a probe that includes gradient checkpointing, 8-bit Adam and real
   accumulation transfers far better. Prefer this style of probe.
 
+## 2026-08-09 — three decisions Arley delegated, and a call to stop researching
+
+Arley delegated these rather than deciding them himself ("you have more context").
+Recording them as decisions so they are not re-litigated, with the reasoning, so
+they can be **reversed on sight** if he disagrees — delegation is not agreement.
+
+**1. Same learning rate in both twins (closes item 26).** Nielsen et al. (ACL
+2025 Findings), the closest published analog to our design, state verbatim: *"We
+employ the same learning rates for both the 16 and 1.58-bit baselines."*
+Microsoft's 6×-higher ternary LR is for *from-scratch pretraining* at 1M-token
+batches — a different regime from continued QAT off a pretrained checkpoint.
+Decisive argument: different LRs would make the twins differ in **two** variables,
+and the pair exists to isolate one. Caveat to state in the write-up: at 1e-4 the
+ternary arm is probably under-trained relative to its own optimum, so absolute
+quality comparisons are partly an LR artefact. We do not claim absolute quality,
+so this costs us nothing we were trying to buy.
+
+**2. `completion_only` — mask the prompt — for phase 2 (closes item 13).** It is
+the literature default and 2606.27634 does it. The real reason: full-sequence
+loss lets prompt-format drift contaminate the forgetting signal, which is the
+exact artefact class that produced the phantom 50-point collapse in the
+turn-terminator entry. A metric that moves because the answer's *shape* changed
+is not measuring knowledge. Cost: phase-1a's numbers stop being directly
+comparable, which is acceptable — 1a was a shakedown.
+
+**3. Item 16 stays closed** (1c affordability, settled by v4 and the finished
+360M arm).
+
+**And the meta-decision: stop sweeping, start measuring.** Four literature
+sweeps ran in one evening. They paid for themselves — item 21 caught a harness
+that would have silently fine-tuned a *float* model and reported it as ternary,
+and item 22 caught our headline metric being able to confirm H1 artefactually
+through scale drift alone. But the marginal sweep had started returning citations
+rather than decisions, and the open list went 20 → 31 while phase 2 did not start.
+
+The rigour was accumulating faster than the results. For a project whose main
+risk is publishing a wrong result that is the right direction to err, but it has
+a failure mode of its own: never shipping. **Next after 1c closes is phase 1d
+(weight-state flips)** — the cheapest real result, a direct test of the
+hypothesis, and the one measurement the whole sweep confirmed nobody has made.
+Items 21-30 get pulled in only where they are load-bearing for *that* number.
+
 ## Open items — the live list
 
 Closed:
@@ -2101,9 +2143,10 @@ Open:
     gap (3.375 vs 0.630 final, Llama). Accuracy matches, so it is not training
     intensity. Suspects: which rows land in the 20% reference carve, or a
     checkpoint-definition mismatch. Do not claim the KL replicates until settled.
-13. **Decide `completion_only` for phase 2.** Phase 1a used full-sequence loss;
-    the literature default and 2606.27634 both mask the prompt. It changes how
-    much a stage drifts, so it changes every forgetting number.
+- ~~13. Decide `completion_only` for phase 2.~~ — decided 2026-08-09 (delegated
+  by Arley): **mask the prompt**. Full-sequence loss lets prompt-format drift
+  contaminate the forgetting signal, the same artefact class as the turn
+  terminator. See the delegated-decisions entry above.
 - ~~14. Generative exact-match eval~~ — done 2026-08-09. Settled it: the swap was
   a teacher-forcing artefact, gemma scores 0.301 generatively against their
   0.320, and the calibration gate passes.
@@ -2185,11 +2228,10 @@ hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
     the best low-bit point" is out of scope (spec §10). Our contribution is the
     forgetting mechanism and the data-matched float-twin control, which is
     bit-width-agnostic in method. Say that once, in the motivation section.
-26. **Decide and state the LR policy across twins.** Microsoft uses a ternary LR
-    6× the float LR at the same size; Nielsen et al. use the same LR for both.
-    Either is defensible with a citation; silence is not. Our 1e-4 is ~15× below
-    Microsoft's 700M ternary LR, so "the ternary arm was starved" is the obvious
-    attack. Decide before the phase-2 card, and record which paper we followed.
+- ~~26. Decide and state the LR policy across twins.~~ — decided 2026-08-09
+  (delegated by Arley): **same LR in both arms**, following Nielsen et al., so the
+  pair differs in one variable. Microsoft's 6× is from-scratch pretraining at 1M
+  batches. See the delegated-decisions entry above.
 27. **Check the double-normalisation.** Microsoft's conversion recipe step 2 is
     *"remove RMSNorm before attention and SwiGLU because BitLinear has built-in
     RMSNorm"*. We do not: `convert.py` replaces the linears and leaves the block's
