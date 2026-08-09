@@ -969,6 +969,55 @@ shakedown saw on ScienceQA and is worth watching in phase 2.
 - **Does not invent forgetting:** PASS (null, 0.000000) — and note this is the
   question the disjoint arm was *supposed* to answer and could not.
 
+## 2026-08-09 — NLL conflates format acquisition with knowledge retention
+
+Banked mid-calibration because it is analysis rather than data, and would
+otherwise exist only in a chat log. From the three Llama 3.2 1B forward-order
+seeds (phase-1b task 6).
+
+**All three seeds disagree with themselves depending on the observable.**
+BWT on accuracy is −0.0076 / −0.0064 / −0.0018 (slight forgetting); BWT on NLL
+is +0.6560 / +0.5972 / +0.5900 (clear *improvement*). Consistent across seeds,
+so this is structural, not noise.
+
+Tracing it: **FOMC's NLL improved from 2.704 to 1.322 after training moved on
+to other tasks, while its accuracy sat flat at 0.270 → 0.260.** The model became
+much better calibrated on FOMC — assigning far more probability mass to the
+answer letter — without changing which letter it ranks first any more often.
+
+The likely mechanism is format. Training on ScienceQA and NumGLUE-cm teaches the
+general shape "answer with one short token", which sharpens probability on the
+answer position regardless of whether the answer is right.
+
+### This complicates the case for our own instrument
+
+Phase 0 and the 1a shakedown established that **accuracy is insensitive** — it
+missed a real +0.110 NLL change on ScienceQA entirely — and I concluded NLL is
+the better instrument. This adds the other half of the picture: **NLL is
+sensitive to things a forgetting study may not care about.** An NLL improvement
+can mean the model learned to *look* like it is answering, not that it retained
+anything.
+
+So the honest position is not "NLL good, accuracy bad". They measure different
+things:
+
+| | picks up | misses |
+| --- | --- | --- |
+| NLL | calibration, format acquisition, confidence | — conflates them with content |
+| accuracy | whether the answer is right | changes in confidence entirely |
+
+Neither alone is sufficient, which is the strongest argument yet for Arley's
+2026-08-09 call to compute both and treat divergence as a finding. Where they
+disagree, **the disagreement itself localises what changed**: NLL up with
+accuracy flat means calibration/format moved and knowledge did not.
+
+**For phase 2 this is a live hazard.** The ternary/float comparison measures
+forgetting via held-out NLL. If a ternary model's conversion changes how sharply
+it emits answer formats — which is plausible, since quantization affects
+confidence — then part of any measured NLL difference would be format, not
+forgetting. Reporting accuracy alongside is the cheapest available guard, and
+the loss matrix already carries both.
+
 ## Open items — the live list
 
 Closed:
