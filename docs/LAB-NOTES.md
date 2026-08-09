@@ -1201,7 +1201,7 @@ system block, so the rendered prompt — and every number from it — changes da
 unless pinned. That silently breaks "re-runnable from a commit hash". Now pinned
 to a fixed date; their implementation has the same exposure.
 
-## 2026-08-09 — phase-1b calibration verdict: drift ordering replicates, the drift→damage link does not
+## 2026-08-09 — phase-1b calibration verdict (SUPERSEDED — see the correction below)
 
 Nine runs in replication mode (3 models × their seeds 33/42/123, paper task
 order), matching 2606.27634's published implementation. `scripts/calib_report.py`.
@@ -1295,6 +1295,70 @@ Phase 2's ≥3-seed requirement (spec §7) is a floor, not a formality. Combined
 with the null control's ~0 instrumentation noise, **seed variance is now
 conclusively the binding constraint on what this rig can resolve.**
 
+## 2026-08-09 — CORRECTION: the calibration gate PASSES; the failure was our metric
+
+The verdict above was wrong and is superseded. It recorded phase 1b as failing
+to replicate 2606.27634's central claim. Generative exact-match evaluation
+(open item 14) shows the failure was **our accuracy metric**, not their result.
+
+### The deciding measurement
+
+Their accuracy is generative exact-match; ours was teacher-forced. Evaluating
+all nine runs generatively — adapters merged, greedy decode, their normaliser:
+
+| model | OP generative | OP teacher-forced | paper |
+| --- | --- | --- | --- |
+| gemma-3-1b-it | **0.301** | 0.586 | **0.320** |
+| Llama-3.2-1B-Instruct | **0.480** | 0.488 | 0.485 |
+| Qwen3.5-0.8B | 0.488 | 0.717 | 0.591 |
+
+Teacher forcing inflated gemma from 0.301 to 0.586 — enough on its own to
+invert its rank and destroy the correlation. Llama barely moved (0.480 vs
+0.488), which is exactly why the disagreement looked localised rather than
+systematic, and why it was worth chasing rather than reporting.
+
+### Both orderings now agree, and both match theirs
+
+```
+by drift (desc)   : gemma > llama > qwen
+by accuracy (asc) : gemma < llama < qwen
+```
+
+**Cross-model KL vs generative accuracy: r = −0.984, p < 0.00001** (n=9)
+against their **r = −0.497, p < 0.001**. Same sign, stronger. Gemma drifts most
+and scores worst; qwen drifts least and scores best. That is their claim,
+reproduced on an independent implementation.
+
+### What this does and does not establish
+
+**Establishes:** the harness reproduces their protocol, their per-model
+accuracies (gemma 0.301 vs 0.320, llama 0.480 vs 0.485), their relative drift
+ranking, and the drift→damage relationship that is the paper's contribution.
+The calibration gate passes.
+
+**Does not establish:** that our absolute KL matches. It is still ~5× theirs
+(open item 12). The *ordering* survives that scale error, which is the more
+robust and more transferable claim, but the scale discrepancy is unexplained.
+
+**Does not establish** that qwen's accuracy matches: 0.488 vs their 0.591, the
+one model still 0.10 out. Gemma and llama both land within 0.02.
+
+### The methodological lesson, which is the durable part
+
+An entire verdict — recorded, committed and pushed — turned on a metric
+difference that looked like a detail. Teacher-forced and generative accuracy
+agreed to within 0.008 on llama and disagreed by 0.285 on gemma. **A metric can
+agree with another on one model and disagree wildly on the next**, so validating
+it on a single model proves nothing about the rest.
+
+This is the second time tonight the same shape of error appeared: the turn
+terminator made FOMC look like it lost 50 points when its content accuracy never
+moved, and teacher forcing made gemma look mid-field when generatively it is
+last. Both were the measurement, not the model. For phase 2, where the
+comparison is ternary vs float rather than model vs model, the same hazard
+applies directly — a metric that behaves differently on quantized models would
+manufacture exactly the effect the project is looking for.
+
 ## Open items — the live list
 
 Closed:
@@ -1344,6 +1408,11 @@ Open:
 13. **Decide `completion_only` for phase 2.** Phase 1a used full-sequence loss;
     the literature default and 2606.27634 both mask the prompt. It changes how
     much a stage drifts, so it changes every forgetting number.
-14. **Generative exact-match eval** is now the highest-value open item. It is the
-    one thing that would settle whether the gemma/llama accuracy swap is real or
-    a teacher-forcing artefact, and it is the deferred half of 1b task 4.
+- ~~14. Generative exact-match eval~~ — done 2026-08-09. Settled it: the swap was
+  a teacher-forcing artefact, gemma scores 0.301 generatively against their
+  0.320, and the calibration gate passes.
+15. **Qwen's accuracy is 0.10 below theirs** (0.488 vs 0.591) where gemma and
+    llama land within 0.02. Possibly the Qwen3.5 chat template's thinking mode,
+    which their config disables via `enable_thinking=False` and which our
+    renderer passes only when the template accepts the kwarg. Worth checking
+    before phase 2 reuses this rendering path.
