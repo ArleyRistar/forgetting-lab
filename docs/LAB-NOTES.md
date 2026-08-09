@@ -1018,6 +1018,92 @@ confidence — then part of any measured NLL difference would be format, not
 forgetting. Reporting accuracy alongside is the cheapest available guard, and
 the loss matrix already carries both.
 
+## 2026-08-09 — the 2606.27634 code repo settles the measurement gap
+
+Our calibration numbers came out 4–8× below theirs across KL, BWT and FWT, with
+matching signs — a uniform scaling across independent metrics, which pointed at
+definitions rather than a real difference. Rather than keep guessing, delegated
+a search for their implementation. It exists:
+**https://github.com/tspthomas/slm_stability_cl** (HEAD `801a3b3`, 2026-05-06).
+The code is definitive where the paper is silent.
+
+### 1. Their KL is ONE token position per example. Ours was ~300.
+
+`src/stability.py::get_next_token_log_probs` takes the logits at the **last
+non-padding position** — i.e. the next-token distribution immediately after the
+rendered prompt, at the assistant generation-prompt position. No answer tokens
+are involved:
+
+```python
+last_indices = attention_mask.sum(dim=1) - 1
+next_token_logits = logits[batch_indices, last_indices, :].float()
+return F.log_softmax(next_token_logits, dim=-1)
+```
+
+We average over every answer token — a median of ~300 per Lima example.
+**Averaging across hundreds of mostly-unchanged tokens dilutes the divergence,
+and that is almost certainly the entire 4–8× gap.**
+
+Two things we had right: the direction is `KL(current ‖ base)`, and the base is
+obtained via `model.disable_adapter()` rather than a second copy — the same
+choice we made independently.
+
+### 2. Their reference set is 48 examples carved from the tasks, not Lima
+
+`scripts/build_reference_set.py` takes **20% of each task's `eval.json`**
+(seed 33), combines and shuffles: **48 examples = 20 FOMC + 20 ScienceQA +
+8 NumGLUE-cm** for the 500-variant the paper uses. Not a separate corpus at all.
+Our Lima choice satisfies the paper's stated *property* (disjoint from all task
+data) but is a different set. The paper never states N_R; only the code does.
+
+### 3. "OP" is generative exact-match accuracy, not token accuracy
+
+`src/evaluate.py::evaluate_accuracy` **generates** greedily (`max_new_tokens=256`,
+`do_sample=False`), trims at the first EOS, then compares normalized strings:
+
+```python
+gold = normalize_answer(example["answer"], task_name)
+pred = normalize_answer(prediction_text, task_name)
+is_correct = pred == gold
+```
+
+`normalize_answer` reduces multiple-choice tasks to the option letter and
+numeric tasks to a canonical number. OP is then the mean accuracy over **tasks
+seen so far**, and BWT/FWT are the standard definitions on that matrix.
+
+We compute per-token argmax accuracy. For FOMC and NumGLUE-cm (single-token
+answers) the two coincide; **for ScienceQA they are entirely different
+quantities**, which explains the BWT/FWT scale gap independently of the KL.
+
+### 4. Protocol differences we had not caught
+
+| | theirs | ours |
+| --- | --- | --- |
+| scoring split | **`test.json`** | `eval.json` |
+| prompt | model chat template + per-task instruction prompts, `add_generation_prompt=True`, no system prompt | our own `<\|user\|>`/`<\|assistant\|>` tags |
+| LR schedule | **none** (no scheduler, no warmup) | cosine + warmup |
+| seeds | 33 / 42 / 123 | 0 / 1 / 2 |
+
+Confirmed matching: LoRA r=8 α=16 dropout 0.05 bias none target `all-linear`;
+AdamW created fresh per task and explicitly deleted after ("Drop optimizer state
+after the task" — our fresh-trainer-per-stage achieves the same, and we asserted
+it); lr 5e-5; batch 2 × grad-accum 8; 1 epoch; seq 512; task order; the
+`_500` variant; and all three model choices.
+
+### What this means
+
+**We have not replicated their protocol.** We built something structurally
+similar and measured it differently, so the 12-run calibration as configured
+could not have validated against their numbers no matter how it came out. The
+four completed runs are discarded rather than mixed across measurement regimes.
+
+The tension to resolve before re-running: **phase 2 will use our instrument, not
+theirs.** Calibrating a configuration we will not use validates the wrong thing.
+The workable framing is a *replication mode* — match their protocol closely
+enough to check the harness against published numbers, then run phase 2 in our
+own configuration having established the harness is sound. What is being
+validated is the harness, not the prompt format.
+
 ## Open items — the live list
 
 Closed:
