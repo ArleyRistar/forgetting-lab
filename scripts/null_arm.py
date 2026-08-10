@@ -24,9 +24,17 @@ So this script instead:
   including it would waste 42% of every checkpoint.
 
 Note the optimizer starts cold: `final/` contains no `optimizer.pt` (verified),
-so Adam state cannot be resumed and `warmup_steps=100` applies. That is why the
-per-step burst sits at the END of the run, not the start — a burst inside LR
-warmup would measure the warmup, not steady-state training.
+so Adam state cannot be resumed and `warmup_steps=100` applies.
+
+**Where to put the per-step burst — both ends of a cosine are wrong.** A burst in
+the first steps measures LR warmup (1e-6–1e-5) and reports a suppressed rate. A
+burst at the end measures the cosine tail, which is worse: measured on the 400-step
+arm, per-step flips fell 109 -> 83 -> ... -> 5 -> 0 across steps 390-400, the last
+step having literally none because the LR had decayed to ~0. A cosine schedule has
+no flat region, so *any* rate read off it is a rate at an unstated learning rate.
+Use `--lr-scheduler constant` with the burst after `warmup_steps` for a number
+quotable as "per-step flips at lr X" — which is what both the DQT comparison and
+phase 2's floor actually need.
 
 Usage:
   uv run scripts/null_arm.py --arm ternary
@@ -119,9 +127,8 @@ class AssertLambdaOne(TrainerCallback):
 class DenseSaves(TrainerCallback):
     """Save every `every` steps, and every step inside `burst`.
 
-    The burst is at the END of the run on purpose: `warmup_steps=100` means the
-    first ten steps run at 1e-6–1e-5, so a burst there would report a per-step
-    flip rate suppressed by LR warmup and fire the DQT comparison spuriously.
+    Place the burst where the LR is known and flat — see the module docstring:
+    on a cosine schedule neither end qualifies.
     """
 
     def __init__(self, every: int, burst: range):
@@ -147,6 +154,12 @@ def main() -> None:
     p.add_argument("--skip-rows", type=int, default=SKIP_ROWS)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--optim", default="adamw_bnb_8bit")
+    # A cosine schedule has no flat region: LR ramps to a peak at `warmup_steps`
+    # then decays to ~0. A per-step flip rate measured anywhere on it is a rate
+    # at an unstated LR. `--lr-scheduler constant` gives a short probe whose
+    # answer is quotable as "per-step flips at lr X", which is what both the
+    # DQT comparison and phase 2's floor actually need.
+    p.add_argument("--lr-scheduler", default="cosine")
     p.add_argument("--output-dir", default=None)
     a = p.parse_args()
 
@@ -183,7 +196,7 @@ def main() -> None:
     args = TrainingArguments(
         output_dir=str(out), max_steps=a.max_steps,
         per_device_train_batch_size=batch, gradient_accumulation_steps=accum,
-        learning_rate=a.lr, lr_scheduler_type="cosine",
+        learning_rate=a.lr, lr_scheduler_type=a.lr_scheduler,
         adam_beta2=0.95, weight_decay=0.0, max_grad_norm=1.0, optim=a.optim,
         warmup_steps=100, bf16=torch.cuda.is_available(),
         gradient_checkpointing=torch.cuda.is_available(),
@@ -208,7 +221,7 @@ def main() -> None:
         "batch_size": batch, "grad_accum": accum,
         "tokens_per_step": batch * accum * a.seq_len,
         "tokens_seen": batch * accum * a.seq_len * a.max_steps,
-        "lr": a.lr, "optim": a.optim, "seed": a.seed,
+        "lr": a.lr, "lr_scheduler": a.lr_scheduler, "optim": a.optim, "seed": a.seed,
         "skip_rows": a.skip_rows, "n_bitlinear": n_bit,
         "saved_steps": sorted(set(callbacks[0].saved)),
         "save_only_model": True,

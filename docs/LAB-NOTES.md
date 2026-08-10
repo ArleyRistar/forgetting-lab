@@ -2344,6 +2344,110 @@ spec §12 question 4 is settled mainly by the null arm.
 cannot exist. Accumulation error over millions of elements; now float64, with a
 regression test. Worth noting because it would have gone into a plot unchallenged.
 
+## 2026-08-10 — phase 1d task 3: the null floor, and a burst-placement mistake
+
+Both twins continued on FineWeb-edu with **no distribution shift**, 400 steps,
+`.skip(300_000)` (past training's ~69,400 and the held-out window's 250,000,
+verified disjoint at runtime), λ asserted == 1 every step, weights-only saves.
+Ternary 53.7 min, float 32.7 min, 26 checkpoints each. Plus a 120-step
+**constant-LR probe** — see below for why that turned out to be necessary.
+
+### The mistake, first: a cosine schedule has no steady state
+
+The card put the per-step burst at steps 390–400 to escape LR warmup, after
+review correctly caught that steps 1–10 would measure the warmup ramp. Both ends
+are wrong. At 390–400 the cosine has decayed to ~0 and the per-step flip count
+falls **109 → 83 → 74 → 66 → 47 → 36 → 24 → 11 → 5 → 0** — the final step has
+literally zero flips because the learning rate is effectively zero.
+
+Read off that tail, the per-step rate is 0.000015%, which is **~3000x below**
+DQT's published 0.05% and would have fired the card's own "investigate if >10x
+away" trigger for an entirely artefactual reason. The general lesson: *any*
+per-step rate read off a cosine schedule is a rate at an unstated learning rate.
+
+Fixed with a 120-step probe at `--lr-scheduler constant`, burst at 110–120, i.e.
+after `warmup_steps=100`, so every burst step sits at exactly lr 1e-4. 15 minutes
+of GPU. `null_arm.py`'s docstring now carries the reasoning; the previous version
+asserted the opposite and would have misled the next person.
+
+### The floor
+
+**Per-step flip rate at lr 1e-4, no distribution shift: 0.008789%** — mean over
+ten consecutive steps, range 0.00818–0.01024%, so it is a stable quantity rather
+than a lucky sample. That is **5.7x below** DQT's ~0.05%/step, which is inside the
+card's 10x band and in the pre-registered direction (they measured at step 2000 of
+*from-scratch* training at a much higher LR; we continue an already-converged
+model at 1e-4). **The investigation trigger does not fire.**
+
+Flips track the learning rate closely — the 25-step series over the cosine arm
+rises through warmup and decays with the schedule, peaking at 0.118% per 25 steps
+at steps 100–125.
+
+### Flips do not accumulate linearly — phase 2 cannot rescale by multiplying
+
+Measured at constant lr 1e-4 from a single origin checkpoint:
+
+| lag (steps) | flip fraction | linear prediction | ratio |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.010243% | 0.010243% | 1.000 |
+| 2 | 0.019413% | 0.020487% | 0.948 |
+| 5 | 0.041392% | 0.051217% | 0.808 |
+| 10 | 0.067343% | 0.102434% | **0.657** |
+
+A third of the linearly-extrapolated flips have disappeared by lag 10, because
+weights re-flip and revert. **A per-step floor cannot be scaled to a per-interval
+floor by multiplication**, and the curve is still falling at lag 10. Phase 2 must
+either log at the cadence it reports, or use this curve.
+
+### Persistence, at a stated cadence
+
+Cadence-dependent, so the number is meaningless without one:
+
+| cadence | k=1 | k=2 | k=4 |
+| --- | ---: | ---: | ---: |
+| 1 step (constant lr, null arm) | 0.9728 | 0.9460 | 0.8940 |
+| 1000 steps (conversion, ternary) | 0.866 | 0.824 | — |
+| 1000 steps (conversion, float counterfactual) | 0.781 | 0.740 | — |
+
+This settles spec §12 open question 4's window-length half: **report persistence
+with its cadence attached, and prefer the run's own logging cadence.** The
+null-arm figure in `outputs/null/flips-ternary.json` mixes 25-step and 1-step
+intervals and should not be quoted; the table above uses uniform cadences only.
+
+### Item 22 is settled — and my extrapolation was backwards
+
+Scale-driven flips, by resolution, ternary arm:
+
+| interval | scale-only share of flips |
+| --- | ---: |
+| 1 step | **0%** (1 scale-only flip across 10 intervals) |
+| 25 steps | ~0.001% |
+| 1000 steps | 0.0009% → 0.0084% (rising as LR decays) |
+
+In the tasks 1–2 entry I noted the share rising 10x across the conversion run and
+warned it might be worse at finer cadence. **It is the opposite.** The share grows
+with *interval length*: the absmean over 314.6M weights is extremely stable step
+to step and only accumulates drift over long spans, while individual weights keep
+crossing. At the resolution phase 2 will actually log, the confound is nil.
+
+So the decomposition can be reported rather than relied on — with one live caveat:
+this is measured under **no distribution shift**. A task that systematically
+changes weight magnitudes would move the absmean more, and the instrument stays
+worth running for exactly that case.
+
+### flips ≈ 0.0002 x L2 survives at finer resolution
+
+`flips_per_unit_l2` across the 25-step intervals is **0.000208–0.000249**
+(ternary) and **0.000201–0.000202** (float), spanning a 20x range of L2. The
+tasks 1–2 finding was not an artefact of 1000-step checkpoints. Flip fraction is
+a rescaled L2 under diffuse drift, and that remains the null H1 must beat.
+
+### Budget
+
+GPU used in phase 1d so far: ternary null 0.9 h + float null 0.55 h +
+constant-LR probe 0.25 h ≈ **1.7 of the 4.5 budgeted**. Task 4 (the item-20
+capability gate) is the remainder. Disk at 22%.
+
 ## Open items — the live list
 
 Closed:
