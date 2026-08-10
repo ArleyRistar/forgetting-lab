@@ -2147,6 +2147,35 @@ flattered both twins equally against the base model, so
 identical tokens — would still have been fair. The damage was to the
 *base*-model comparisons and to the honesty of the word "held-out".
 
+## 2026-08-10 — zero fraction 0.3254 validates the absmean implementation
+
+Item 30's kept half. Microsoft documents the {-1,0,+1} distribution in a trained
+BitNet b1.58 as *"nearly uniform"*, i.e. a zero fraction near 1/3, and notes that
+tuning the scale toward *more* zeros hurt performance. Measured on our converted
+360M twin (loaded through `flab.loading`, so these are genuinely the effective
+weights the forward pass uses, not latents):
+
+| projection | zero fraction |
+| --- | ---: |
+| q_proj | 0.3538 |
+| k_proj | 0.3500 |
+| v_proj | 0.3341 |
+| o_proj | 0.3302 |
+| down_proj | 0.3212 |
+| gate_proj | 0.3203 |
+| up_proj | 0.3181 |
+| **overall (224 layers)** | **0.3254** |
+
+Against 0.3333 expected. This is an independent check on `weight_quant`: an
+absmean threshold that was too aggressive or too slack would show up here as a
+zero fraction far from a third, and it does not. The spread across projection
+types (0.318–0.354) is small and in a sensible order — attention projections
+slightly sparser than the FFN's.
+
+Worth keeping for phase 1d: this is the *starting* zero occupancy. If
+sequential fine-tuning moves it, that motion is itself part of the moving-threshold
+story, and per-projection is the resolution at which to watch it.
+
 ## Open items — the live list
 
 Closed:
@@ -2324,7 +2353,11 @@ hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
     the *optimizer* could flip effective weights. We depend on it for the 360M
     memory budget. At minimum, a 135M fp32-Adam vs 8-bit-Adam flip-rate
     comparison before flips become the headline metric.
-30. **[SPLIT] Do the zero-fraction check now** (minutes, CPU — validates the
+- ~~30. Zero-fraction check.~~ — **DONE 2026-08-10**: 0.3254 overall vs
+  Microsoft's ~0.3333, see the entry above. The baseline-comparison half remains
+  a write-up table row, not a task.
+
+30. [superseded, kept for context] **[SPLIT] Do the zero-fraction check now** (minutes, CPU — validates the
     absmean implementation against Microsoft's "nearly uniform" ≈1/3); the
     baseline comparison itself is a write-up table row, not a task.
     BitNet's measured

@@ -91,7 +91,8 @@ def wikitext_blocks(tok, n_blocks: int, seq_len: int):
     """
     from datasets import load_dataset
 
-    ds = load_dataset("wikitext", "wikitext-103-raw-v1", split="test")
+    # `wikitext` alone is a legacy un-namespaced id and no longer resolves.
+    ds = load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1", split="test")
     buf, blocks = [], []
     for row in ds:
         if not row["text"].strip():
@@ -159,8 +160,16 @@ def main() -> None:
           f"{TRAIN_ROWS_ESTIMATE:,}", flush=True)
     corpora = {"fineweb_heldout": heldout_blocks(tok, a.n_blocks, a.seq_len,
                                                  a.seed, a.skip_rows)}
+    # The OOD corpus is a nice-to-have; the FineWeb held-out set is the primary
+    # measurement and must not be lost because a secondary download failed.
+    # (It already was once: the legacy `wikitext` id stopped resolving and took
+    # the whole run down *after* the expensive 250k-row skip had completed.)
     print("building wikitext-103 test blocks (out-of-distribution)", flush=True)
-    corpora["wikitext103_test"] = wikitext_blocks(tok, a.n_blocks, a.seq_len)
+    try:
+        corpora["wikitext103_test"] = wikitext_blocks(tok, a.n_blocks, a.seq_len)
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"  wikitext unavailable ({type(exc).__name__}: {exc}) — "
+              "continuing with the FineWeb held-out set only", flush=True)
 
     out = {"n_blocks": a.n_blocks, "seq_len": a.seq_len, "heldout_seed": a.seed,
            "skip_rows": a.skip_rows, "train_rows_estimate": TRAIN_ROWS_ESTIMATE,
