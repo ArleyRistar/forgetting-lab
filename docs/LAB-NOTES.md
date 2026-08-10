@@ -2176,6 +2176,86 @@ Worth keeping for phase 1d: this is the *starting* zero occupancy. If
 sequential fine-tuning moves it, that motion is itself part of the moving-threshold
 story, and per-projection is the resolution at which to watch it.
 
+## 2026-08-10 — PHASE 1C COMPLETE: the conversion gap is 2.59 nats
+
+Both twins done, scored on identical held-out blocks through `flab.loading`
+(224 BitLinear layers re-applied at λ=1, effective weights verified
+three-valued). 64 blocks x 1024 tokens per corpus.
+
+| model | FineWeb held-out | ppl | WikiText-103 test | ppl |
+| --- | ---: | ---: | ---: | ---: |
+| SmolLM2-360M base | 2.5257 | 12.50 | 2.5783 | 13.17 |
+| float twin | 2.5373 | 12.65 | 2.6707 | 14.45 |
+| **ternary twin** | **5.1288** | **168.82** | **6.2976** | **543.25** |
+
+**The number that matters — `ternary_vs_float_twin` = 2.5915 nats** on the
+in-distribution held-out set (13.3x worse perplexity), because both twins saw
+*identical tokens in identical order*. Out of distribution it is **3.6268**
+(37.6x). Base comparisons are documentation, not results: 2.6031 and 3.7193.
+
+### What makes the twin worth having
+
+**`float_twin_vs_base` is +0.0116 nats.** The float twin, given the same 66M
+tokens the ternary arm got, ended up essentially where the base model started.
+That is the control doing its job: it means the 2.59-nat ternary gap is
+attributable to **ternarisation**, not to the extra training, the LR, the
+schedule, or the corpus. Without this arm the gap would have been confounded and
+we could not have said which.
+
+Do **not** report that +0.0116 as "continued training made it slightly worse".
+64 blocks is a small sample and that difference is well inside the range where
+this eval cannot resolve direction. The 2.59-nat gap is not remotely in that
+regime; a difference three orders of magnitude smaller is.
+
+### Internal consistency (the check that the held-out set is sane)
+
+| arm | final training loss | held-out loss |
+| --- | ---: | ---: |
+| ternary | 5.156 | 5.129 |
+| float | 2.523 | 2.537 |
+
+Both land on held-out essentially where they finished training, which is what a
+single-pass 66M-token run with no repetition should do. It is also a check on the
+new disjointness construction: contamination would have pushed held-out *below*
+training loss, and it did not.
+
+### The gap is worse out of distribution — a real finding
+
+Ternary costs 2.59 nats on data resembling the conversion corpus and **3.63 on
+WikiText**. The float twin shows the same asymmetry far more weakly (+0.012
+in-distribution vs +0.092 OOD). So the converted model has partially re-fit to
+FineWeb-edu rather than retaining general capability — consistent with the HF
+blog's "loses all of its prior information when quantization is introduced" and
+with the decision on item 31 to scope forgetting to *relearned* knowledge.
+
+For phase 2 this is directly actionable: **probe tasks unlike FineWeb-edu will
+start from a much weaker ternary baseline than in-distribution ones.** That is
+exactly the item-20 gate, and this result says it will bite.
+
+### Against the closest published run
+
+The HF 1.58-bit blog reports WikiText perplexity **12.2** for a converted model
+trained 5,000 steps on FineWeb-edu at a **2M-token batch** = ~10B tokens. Ours is
+543 at 66M tokens — roughly **150x less data**, at a 16k-token batch. State the
+comparison with those numbers attached or it is meaningless; our own notes are
+not precise on which model that 12.2 refers to, so do not attribute it to a
+specific scale without rechecking the source.
+
+### What the twins do and do not share
+
+Matched: model, tokens, token order, tokens/step (16384), total steps (4000),
+LR (1e-4), cosine schedule, 8-bit Adam, β2 0.95, wd 0, clip 1.0, seed 0.
+**Not** matched: micro-batch (2 vs 4) and allocator config, forced by the float
+arm needing *more* memory than the ternary one under autocast, and consequently
+step time (4.3 s vs 7.5 s) and wall clock (4h44m vs 8h24m).
+
+Held-out disjointness is structural — same seed-0 stream as training, skipped
+250,000 rows past the ~69,400 training consumed, cross-process stream
+reproducibility verified.
+
+**Phase 1c is complete.** The matched pair the project rests on exists and is
+measured. Next is phase 1d (weight-state flips), which needs a design card.
+
 ## Open items — the live list
 
 Closed:
