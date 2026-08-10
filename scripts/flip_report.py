@@ -70,14 +70,29 @@ def main() -> None:
     p.add_argument("--arm", choices=("ternary", "float"), default="ternary")
     p.add_argument("--root", default=None)
     p.add_argument("--steps", default="1000,2000,3000,4000")
+    p.add_argument("--origin", default="base",
+                   help="what step 0 is: 'base' (the pretrained model, whose "
+                        "weights ARE the initial latents) or a checkpoint path "
+                        "(the null arm starts from the converted twin, not base)")
+    p.add_argument("--all-checkpoints", action="store_true",
+                   help="use every checkpoint-N under --root, sorted by N — the "
+                        "null arm saves 26 of them at irregular steps")
     p.add_argument("--out", default=None)
     a = p.parse_args()
 
     root = Path(a.root or f"outputs/convert/{a.arm}-360m")
-    steps = [int(s) for s in a.steps.split(",")]
+    if a.all_checkpoints:
+        steps = sorted(int(d.name.split("-")[1]) for d in root.glob("checkpoint-*")
+                       if d.is_dir())
+    else:
+        steps = [int(s) for s in a.steps.split(",")]
 
-    print("loading step 0 (base model = initial latents)", flush=True)
-    sources = [Source("step0", None, base_state_dict())]
+    if a.origin == "base":
+        print("loading step 0 (base model = initial latents)", flush=True)
+        sources = [Source("step0", None, base_state_dict())]
+    else:
+        print(f"loading step 0 from {a.origin}", flush=True)
+        sources = [Source("step0", Path(a.origin))]
     for s in steps:
         d = root / f"checkpoint-{s}"
         if not d.is_dir():
@@ -95,7 +110,7 @@ def main() -> None:
     per_kind: dict[tuple[str, str], flips.FlipStats] = defaultdict(flips.FlipStats)
     agg_cur: dict[str, flips.FlipStats] = defaultdict(flips.FlipStats)
     dist: dict[str, dict] = defaultdict(lambda: {"l2": 0.0, "cos": 0.0, "n": 0})
-    persist: dict[int, list[int]] = {k: [0, 0] for k in (1, 2)}
+    persist: dict[int, list[int]] = {k: [0, 0] for k in (1, 2, 4)}
     hist: dict[str, torch.Tensor] = {}
 
     for i, name in enumerate(names):
