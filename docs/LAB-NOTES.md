@@ -2632,6 +2632,27 @@ works end to end, which was the second reason for routing this through
 ~0.3 of the 1.0 GPU-h carded. Training was 0.75–2.1 s/step at `max_length=256`,
 the project's first short-sequence job — the 80% contingency was not needed.
 
+## 2026-08-10 — an external USB fan has been running since ~2026-08-08
+
+Arley added a small USB fan to the chassis around 2026-08-08, i.e. **before** the
+360M conversion runs and everything measured since. So the project's planning
+numbers already include it:
+
+- thermal derate **1.9x**, steady-state **87 C**, ternary **7.5 s/step** at
+  seq 1024, float **4.3 s/step** — all measured fan-on.
+
+Two consequences. There is **no fan-off baseline**, so the fan's benefit cannot be
+quantified retrospectively — a comparison against the 87 C figure would be
+comparing fan-on to fan-on. And if the fan is ever removed, every derate-based
+GPU-hour estimate in the cards becomes **optimistic**, so that would need
+re-measuring rather than assuming.
+
+The fan is a dumb VBUS load: it does not enumerate in `lsusb`, so it cannot be
+switched from software without `uhubctl` and a hub supporting per-port power
+switching (these are internal xHCI root hubs, which typically do not). Left
+permanently on by decision — at ~2.5 W the saving from cycling it is negligible
+against the cost of a bug that leaves it off during a thermally-limited run.
+
 ## Open items — the live list
 
 Closed:
