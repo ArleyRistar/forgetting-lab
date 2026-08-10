@@ -103,7 +103,16 @@ def main() -> None:
 
     seeds = [int(x) for x in a.seeds.split(",")]
     budgets = [int(x) for x in a.budgets.split(",")]
+
+    # Merge with any previous invocation rather than overwriting. The first run
+    # started `rows = []` and clobbered seed 0's results when seeds 1,2 launched;
+    # only an incidental choice in phase2_flips.py (it copies `forgetting` into
+    # each predictor row and merges by key) kept that data alive.
+    results_path = ROOT / "results.json"
     rows = []
+    if results_path.is_file():
+        rows = [r for r in json.loads(results_path.read_text())
+                if r["seed"] not in seeds]     # re-running a seed replaces it
     t_start = time.perf_counter()
 
     for arm in a.arms.split(","):
