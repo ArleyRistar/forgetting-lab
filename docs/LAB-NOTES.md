@@ -2448,6 +2448,83 @@ GPU used in phase 1d so far: ternary null 0.9 h + float null 0.55 h +
 constant-LR probe 0.25 h ≈ **1.7 of the 4.5 budgeted**. Task 4 (the item-20
 capability gate) is the remainder. Disk at 22%.
 
+## 2026-08-10 — phase 1d task 4: THE ITEM-20 GATE FAILS. Phase 2 is blocked.
+
+Paired shuffled-answer control, n=200, derangement so no item keeps its own
+answer. Criterion: keep a probe only if (control − true) answer NLL ≥ 3 SE of the
+paired difference. **The base model was run as a positive control for the gate
+itself** — without it, "the twin scores 0.6 SE" cannot be distinguished from "the
+instrument is broken", and this project has twice mistaken the second for the first.
+
+| task | base | ternary twin | float twin |
+| --- | ---: | ---: | ---: |
+| ScienceQA | **6.1 SE** KEEP | 0.8 SE drop | **5.5 SE** KEEP |
+| Py150 | **9.4 SE** KEEP | 0.1 SE drop | **9.2 SE** KEEP |
+| NumGLUE-cm | 1.5 SE drop | 0.2 SE drop | 1.1 SE drop |
+| FOMC | 0.1 SE drop | −0.8 SE drop | 0.1 SE drop |
+| synth-conflict-a | 0.3 SE drop | −0.0 SE drop | 0.3 SE drop |
+| synth-disjoint-a | 0.1 SE drop | −0.0 SE drop | 0.0 SE drop |
+
+**Surviving probes for the ternary twin: none. The gate fails.**
+
+### The instrument works, which is what makes the null readable
+
+The base model discriminates strongly on two of six probes, so a 0.1 SE reading
+is a statement about the model, not about the measurement. The gate also
+discriminates between *tasks* — FOMC fails for **every** arm including base, so it
+is a bad probe at this scale rather than evidence about any twin.
+
+### The attribution is clean, and it is the twin's whole purpose
+
+The float twin — same tokens, same order, same steps, same LR, same optimizer —
+scores 5.5 and 9.2 SE against base's 6.1 and 9.4. It kept essentially all of it.
+The ternary twin kept none. Absolute NLLs make the size of it plain:
+
+| task | base | float twin | ternary twin |
+| --- | ---: | ---: | ---: |
+| Py150 answer NLL | 2.31 | 2.45 | **8.29** |
+| ScienceQA answer NLL | 1.70 | 1.74 | **4.91** |
+
+and the discrimination signal on Py150 collapses from +1.69 / +1.71 nats to
+**+0.017** — a ~100x reduction. So this is not the continued training, the corpus,
+the learning rate or the harness. **Ternarisation at 66M tokens destroyed the
+task capability**, and we can say so because the control held.
+
+This is consistent with everything else measured: the 2.59-nat conversion gap,
+the 3.63-nat gap out of distribution, and the HF blog's "the model loses all of
+its prior information when quantization is introduced".
+
+### The synthetic tasks were mis-specified as candidates, by me
+
+`synth-*` scores ~0 SE for the **base** model too — as it must, because those
+associations are invented for this project and no pretrained model has seen them.
+They are meant to be *taught* during phase 2 and then measured for forgetting.
+The gate asks "can the model do this at t=0", which is the right question for
+retained capability and the wrong one for a task the experiment teaches. Their
+appearance in the card's candidate list was an error; **their failure here is not
+evidence they are unusable.** Testing them needs a learnability check — train
+briefly, then measure — which is a different and more expensive instrument.
+
+### What this means, per the pre-registered response
+
+The card states: *"if no candidate probe passes Task 4, phase 2 cannot produce a
+forgetting signal, and the response is distillation (item 17) or more conversion
+tokens — not proceeding."* That condition has fired. **Phase 2 does not start.**
+
+The gate did exactly the job it was added for: it cost ~0.5 GPU-h and it caught,
+before seven phase-2 runs, that the ternary twin has nothing left to forget. A
+flat forgetting curve from those runs would have been reported as "ternary models
+forget less" — the most flattering possible misreading of a broken premise.
+
+Note this does **not** invalidate tasks 1–3. The flip instrument, the null floor,
+the sub-linear accumulation curve and the flips≈0.0002·L2 relation are all
+properties of the conversion trajectory and stand on their own. What is blocked is
+the forgetting experiment, not the instrumentation.
+
+### Phase 1d budget
+
+Used ~2.2 of 4.5 GPU-h (null arms 1.45, constant-LR probe 0.25, gate ~0.5).
+
 ## Open items — the live list
 
 Closed:
