@@ -77,7 +77,33 @@ def verify_model_digest(cfg: RunConfig) -> str | None:
 
 
 def _load_base(cfg: RunConfig):
+    """Load the run's base model, re-ternarising it if it is a converted twin.
+
+    This is the **only** place the harness loads weights — `probes.py`,
+    `clmetrics.py` and `generative.py` all receive a model rather than opening
+    one — so routing it through `flab.loading` closes open item 21 for the whole
+    phase-2 path. A ternary checkpoint holds *latent* weights, so loading it with
+    a plain `from_pretrained` yields a float model that trains and scores
+    perfectly well and is silently the wrong object.
+
+    fp32 for ternary twins, not bf16: bf16 latent weights round ~85% of Adam
+    updates to zero at lr 1e-4 (LAB-NOTES, "the shakedowns failed because latent
+    weights were bf16"). Phase 2 fine-tunes these, so the same trap applies.
+    """
     from transformers import AutoModelForCausalLM
+    from flab import loading
+
+    if loading.is_ternary_checkpoint(cfg.model):
+        model, n = loading.load_converted(cfg.model, dtype=torch.float32)
+        if n == 0:
+            raise RuntimeError(
+                f"{cfg.model} looked like a ternary checkpoint but no BitLinear "
+                "layers were applied — this would train a FLOAT model and label "
+                "it ternary")
+        print(f"loaded ternary twin: {n} BitLinear layers at lambda=1, "
+              "effective weights verified three-valued", flush=True)
+        verify_model_digest(cfg)
+        return model
 
     # transformers 5.x renamed torch_dtype -> dtype (LAB-NOTES quirk 2)
     kwargs = {"dtype": "bfloat16"} if torch.cuda.is_available() else {}

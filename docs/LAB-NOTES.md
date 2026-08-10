@@ -2275,10 +2275,20 @@ hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
   count, not the absence of an exception) and a sabotaged quantiser. Verified
   end-to-end on the real checkpoint: 224 layers, guard passed.
 
-  Still to do when phase 2 is written: route `sequential.py`, `probes.py`,
-  `clmetrics.py` and `eval.sh` through it — the module exists, the callers do not
-  yet use it. `eval.sh:8` additionally hardcodes
-  `pretrained=HuggingFaceTB/SmolLM2-360M` and cannot load a twin at all.
+  **Wiring completed 2026-08-10.** The harness turned out to have exactly *one*
+  weight-loading site: `sequential.py::_load_base`. `probes.py`, `clmetrics.py`
+  and `generative.py` all *receive* a model rather than opening one, so they
+  needed no change — the earlier note that they "do not re-apply BitLinear" was
+  true but misleading. `_load_base` now detects a ternary checkpoint, loads it
+  through `flab.loading` **in fp32** (bf16 latents round ~85% of Adam updates to
+  zero at lr 1e-4, and phase 2 fine-tunes these), and raises if a checkpoint that
+  claims to be ternary comes back with zero BitLinear layers. Two more tests
+  cover it, including an assertion on the dtype.
+
+  Still outstanding: `eval.sh:8` hardcodes
+  `pretrained=HuggingFaceTB/SmolLM2-360M` and cannot load a twin at all. It is
+  not on the phase-2 critical path (the likelihood probes go through
+  `sequential.py`), but it must not be pointed at a twin and believed.
 
   Original item, for the record:
 21. **Make the phase-2 harness BitLinear-aware, with a runtime assert.**

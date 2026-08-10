@@ -110,3 +110,39 @@ def test_effective_weights_really_are_three_valued_after_convert():
     for mod in m.modules():
         if isinstance(mod, bl.BitLinear):
             assert torch.unique(bl.weight_quant(mod.weight)).numel() <= 3
+
+
+# -- the harness routes through this path (open item 21) ------------------
+
+
+def test_sequential_load_base_goes_through_the_shared_path(tmp_path, monkeypatch):
+    """`_load_base` is the harness's only weight-loading site, so if it does not
+    re-ternarise, phase 2 fine-tunes a float model and calls it ternary."""
+    from flab import sequential
+
+    _write_meta(tmp_path)
+    calls = {}
+
+    def fake_load_converted(path, **kw):
+        calls["path"], calls["kw"] = path, kw
+        return _Tiny(), 7
+
+    monkeypatch.setattr(loading, "load_converted", fake_load_converted)
+    monkeypatch.setattr(sequential, "verify_model_digest", lambda cfg: None)
+
+    cfg = type("C", (), {"model": str(tmp_path)})()
+    sequential._load_base(cfg)
+    assert calls["path"] == str(tmp_path)
+    assert calls["kw"]["dtype"] is torch.float32, \
+        "ternary latents must load fp32; bf16 rounds most Adam updates to zero"
+
+
+def test_sequential_refuses_a_ternary_checkpoint_that_loads_as_float(tmp_path, monkeypatch):
+    from flab import sequential
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(loading, "load_converted", lambda path, **kw: (_Tiny(), 0))
+    monkeypatch.setattr(sequential, "verify_model_digest", lambda cfg: None)
+    cfg = type("C", (), {"model": str(tmp_path)})()
+    with pytest.raises(RuntimeError, match="FLOAT model"):
+        sequential._load_base(cfg)
