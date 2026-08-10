@@ -2566,6 +2566,72 @@ cadences, about ±15%. Show the scatter rather than asserting constancy.
 
 Used ~2.2 of 4.5 GPU-h (null arms 1.45, constant-LR probe 0.25, gate ~0.5).
 
+## 2026-08-10 — phase 1e: the ternary twin CAN learn. Phase 2 is unblocked.
+
+Approved card `plans/2026-08-10-phase-1e-learnability.md`. Full fine-tune of each
+twin on `synth-conflict-a` (50 nonsense keys, single-letter values), prompt masked
+(item 13), lr 1e-4 (item 26), 300 steps, run **through `sequential.py`** — the
+phase-2 harness, training a ternary model end to end for the first time.
+
+| arm | held-out NLL before | after | token acc | derangement delta |
+| --- | ---: | ---: | ---: | ---: |
+| ternary | 7.2063 | **0.000057** | **1.000** | **+11.696 (17.7 SE)** |
+| float | 6.1055 | **0.000036** | **1.000** | +13.933 (17.5 SE) |
+
+Chance is `log(8) = 2.0794`; the pre-registered bar was NLL < 1.4 **and**
+derangement ≥ 3 SE. Both twins clear both by orders of magnitude, on all 50
+held-out keys. **Row 1 of the decision table fires: phase 2 proceeds on taught
+tasks — no new conversion, no distillation.**
+
+### The result worth stating plainly
+
+**The ternary twin has no retained capability and full plasticity.** The item-20
+gate found it could not discriminate on a single pretrained task (best 0.8 SE,
+Py150 answer NLL 8.29 against float's 2.45). The same checkpoint, given 300 steps,
+memorises fifty arbitrary key→value associations to perfect held-out accuracy and
+an 11.7-nat margin over a deranged pairing.
+
+Recall gone, learning intact. Those are separable, and conflating them is what
+made "phase 2 is blocked" look true yesterday. The correct reading of phase 1d is
+narrower than what I wrote: **conversion at 66M tokens destroyed what the model
+knew, not its ability to learn.**
+
+### Honest detail: the baseline is not a chance baseline
+
+Before training, both twins sit *above* chance — 7.21 and 6.11 against 2.0794.
+They are not knowledge-free at 2.08, they are **format-naive**: without training,
+neither model knows to answer with a bare single letter, so it puts mass
+elsewhere entirely. This does not weaken the result (the after-values are ~0), but
+"before ≈ chance" would have been a wrong description and the gap is large enough
+that a reader would notice.
+
+### What this settles for phase 2's design
+
+- **The task sequence must be taught tasks, not retained ones.** Both arms must
+  run the same sequence for the pair to mean anything, and the ternary twin
+  cannot do the TRACE tasks at all. The `synth-*` pairs were built in phase 1b as
+  controls; they are now the primary instrument.
+- That is a better fit than it sounds: `synth-conflict-a/b` share a key namespace,
+  so learning B **must** destroy A — the forgetting is analytically bounded, not
+  merely expected — while `synth-disjoint-a/b` gives the noise floor. Known
+  answers on both ends is exactly what phase 1b built them for.
+- **Item 17 (distillation) drops off the critical path.** It is no longer needed
+  to unblock phase 2. It remains the route if we ever want a twin that is capable
+  on *real* tasks, which is a different and more expensive goal.
+
+### The harness survived its first ternary run
+
+`assert_ternary` passed before and after training (224 layers, still three-valued),
+λ stayed at 1, and `completion_only` was verified on a real example rather than
+trusted — 1 supervised token of 36, exactly the answer letter. Item 21's wiring
+works end to end, which was the second reason for routing this through
+`sequential.py` rather than a fresh script.
+
+### Budget
+
+~0.3 of the 1.0 GPU-h carded. Training was 0.75–2.1 s/step at `max_length=256`,
+the project's first short-sequence job — the 80% contingency was not needed.
+
 ## Open items — the live list
 
 Closed:
