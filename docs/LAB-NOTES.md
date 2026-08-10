@@ -2512,6 +2512,19 @@ appearance in the card's candidate list was an error; **their failure here is no
 evidence they are unusable.** Testing them needs a learnability check — train
 briefly, then measure — which is a different and more expensive instrument.
 
+### CORRECTION, same day: this does not block phase 2 on its own
+
+The entry below concluded phase 2 was blocked. **That does not follow from this
+gate**, and the contradiction is two paragraphs above it: the synth tasks are
+*taught* by the experiment, not retained from pretraining, so their gate result
+says nothing — and item 31 scoped forgetting to what the converted model
+**relearned**.
+
+The gate answered *can it recall?*. Phase 2 needs *can it learn?*. Nobody has
+asked the second question. Card written 2026-08-10:
+`plans/2026-08-10-phase-1e-learnability.md`, ~1 GPU-h, awaiting approval. Phase 2
+stays paused until it reports — but the reason is "untested", not "impossible".
+
 ### What this means, per the pre-registered response
 
 The card states: *"if no candidate probe passes Task 4, phase 2 cannot produce a
