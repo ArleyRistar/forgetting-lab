@@ -120,7 +120,7 @@ def gate_one(model, tokenizer, task: str, n_eval: int, seed: int,
         "control_nll": sum(c for c in ctrl_nll if not math.isnan(c)) / n,
         "paired_delta": mean, "se": se, "n_se": n_se,
         "verdict": "KEEP" if n_se >= SE_THRESHOLD else "DROP",
-        "examples_available": stats.get("n_available"),
+        "examples_available": stats.get("available"),   # key is "available" (trace.py:188)
     }
 
 

@@ -2450,8 +2450,10 @@ capability gate) is the remainder. Disk at 22%.
 
 ## 2026-08-10 — phase 1d task 4: THE ITEM-20 GATE FAILS. Phase 2 is blocked.
 
-Paired shuffled-answer control, n=200, derangement so no item keeps its own
-answer. Criterion: keep a probe only if (control − true) answer NLL ≥ 3 SE of the
+Paired shuffled-answer control, derangement so no item keeps its own answer.
+**n was 200 only for FOMC, ScienceQA and Py150**; NumGLUE-cm had 41 scorable
+items and the synth tasks 50, because that is all their held-out splits hold. An
+earlier version of this entry said "n=200" unqualified, which was wrong. Criterion: keep a probe only if (control − true) answer NLL ≥ 3 SE of the
 paired difference. **The base model was run as a positive control for the gate
 itself** — without it, "the twin scores 0.6 SE" cannot be distinguished from "the
 instrument is broken", and this project has twice mistaken the second for the first.
@@ -2466,6 +2468,11 @@ instrument is broken", and this project has twice mistaken the second for the fi
 | synth-disjoint-a | 0.1 SE drop | −0.0 SE drop | 0.0 SE drop |
 
 **Surviving probes for the ternary twin: none. The gate fails.**
+
+**NumGLUE-cm is underpowered, not empty.** Base scores delta +0.566 at 1.5 SE on
+41 items; the same effect at n=200 would land near 3.3 SE. It should be recorded
+as "not enough held-out data to decide", not as "the base model cannot do it".
+The ternary twin is at 0.2 SE there regardless.
 
 ### The instrument works, which is what makes the null readable
 
@@ -2520,6 +2527,27 @@ Note this does **not** invalidate tasks 1–3. The flip instrument, the null flo
 the sub-linear accumulation curve and the flips≈0.0002·L2 relation are all
 properties of the conversion trajectory and stand on their own. What is blocked is
 the forgetting experiment, not the instrumentation.
+
+### Four things phase 1d promised and did not deliver
+
+Recorded rather than quietly dropped:
+
+1. **KL-to-base as a competing predictor was never computed.** The design card
+   commits to it on both arms (Metrics, and change 5 of the v1→v2 changelog);
+   `flip_report.py` emits L2 and cosine only. Item 19 is therefore still open in
+   full, not half. Eval-only and cheap — compute it or descope it explicitly.
+2. **Item 23's float-sliver covariate was never logged** either, despite the card
+   saying "only its covariate is logged".
+3. **Flips *and* L2 both exclude the 13.1% float sliver.** `flip_report.is_target`
+   restricts to BitLinear tensors, so every `flips_per_unit_l2` in these entries
+   is flips over *core* L2. Internally consistent, but a reader comparing against
+   a whole-model parameter distance would be misled.
+4. **The per-step floor 0.008789% is ternary-only.** No float constant-LR probe
+   was run, so there is no float comparator at per-step resolution.
+
+Also: "flips/L2 is constant to three significant figures" holds for the *float*
+arm at 1000-step cadence; the ternary arm spans 0.000186–0.000249 across all
+cadences, about ±15%. Show the scatter rather than asserting constancy.
 
 ### Phase 1d budget
 
