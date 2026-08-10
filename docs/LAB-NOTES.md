@@ -2256,6 +2256,94 @@ reproducibility verified.
 **Phase 1c is complete.** The matched pair the project rests on exists and is
 measured. Next is phase 1d (weight-state flips), which needs a design card.
 
+## 2026-08-10 — phase 1d tasks 1-2: flips are weight-driven, and track L2 almost exactly
+
+Instrument built (`src/flab/flips.py`, 23 tests on hand-built tensors) and run
+over the conversion checkpoints of both twins at steps 0 → 1000 → 2000 → 3000 →
+4000. Step 0 is the base model, whose weights *are* the initial latents. Zero GPU:
+we already owned the checkpoints. Note `final/` is byte-identical to
+`checkpoint-4000` (sha256 verified), so there is no fifth interval.
+
+The float twin's flips are **counterfactual** — its weights are not ternary, but
+applying the same state function answers a question H1 needs: how much would a
+float model's would-be ternary states move under the same training?
+
+| interval | arm | flip fraction | flips / L2 | scale-only | scale share |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 0→1000 | ternary | 1.1788% | 0.000190 | 34 | 0.0009% |
+| 1000→2000 | ternary | 1.0542% | 0.000186 | 107 | 0.0032% |
+| 2000→3000 | ternary | 0.4856% | 0.000191 | 76 | 0.0050% |
+| 3000→4000 | ternary | 0.0951% | 0.000208 | 25 | 0.0084% |
+| 0→1000 | float | 0.9203% | 0.000199 | 18 | 0.0006% |
+| 1000→2000 | float | 0.7286% | 0.000199 | 6 | 0.0003% |
+| 2000→3000 | float | 0.3663% | 0.000199 | 2 | 0.0002% |
+| 3000→4000 | float | 0.0776% | 0.000200 | 0 | 0.0000% |
+
+(0→1000 spans the λ ramp, 0→800, so it is latent-state motion under partial
+quantisation rather than fully-ternary motion. Both freeze conventions were
+computed and give identical flip sets, as they must — the convention only
+affects class assignment, not membership.)
+
+### 1. The item-22 confound is ~zero here — but its share grows as training slows
+
+**242 of 8,851,049 ternary flips (0.0027%) were scale-driven.** The worry that
+motivated the whole decomposition — that a moving absmean threshold manufactures
+flips and lets H1 confirm itself on a model that learned nothing — does not
+materialise at 1000-step resolution. Flips are overwhelmingly weight-driven.
+
+The guard was still worth building, and here is why: **the scale share rises
+monotonically as weight motion shrinks**, 0.0009% → 0.0032% → 0.0050% → 0.0084%
+across the cosine decay, roughly 10x from first interval to last. Scale motion is
+small but roughly steady; weight motion decays. At phase-2 logging cadence —
+which will be far finer than 1000 steps — the ratio could be entirely different.
+**Do not carry "scale drift is negligible" forward as settled.** The dense burst
+in task 3 is what tests it at per-step resolution.
+
+### 2. Flip fraction is very nearly a linear function of L2 — the H1 problem
+
+`flips / L2` is **0.000199–0.000200 for the float twin across every interval**,
+and 0.000186–0.000208 for the ternary twin. Essentially constant, and essentially
+the *same* constant for both arms.
+
+This is what diffuse drift predicts: if weights move by roughly isotropic
+increments of size σ, the fraction crossing a threshold goes as (density at the
+threshold) × σ while L2 goes as σ√N, so the ratio is a constant set by the weight
+distribution's shape near 0.5. Conversion training evidently looks like that.
+
+**The consequence for H1 is direct.** H1 claims flip fraction predicts forgetting
+*better than parameter distance*. If flips are a rescaled L2, they carry the same
+information and cannot beat it. Under in-distribution continued training they are
+a rescaled L2, to three significant figures.
+
+That is not fatal, and it sharpens phase 2 rather than sinking it. The two
+decouple only when weight motion stops being diffuse: many small moves near the
+threshold give flips without much L2; a few large moves give L2 without many
+flips. **So phase 2's real question is whether task shift produces structured
+motion.** This result is the null it must beat, and it is now measured rather
+than assumed — which is exactly what an instrument phase is for.
+
+### 3. Ternary is not more fragile per unit of movement
+
+Ternary logged 8.85M flips against float's 6.58M, but it also moved further (L2
+62.0 vs 46.2 on the first interval). Per unit of L2 the ternary arm is **slightly
+lower** than the float counterfactual for three of four intervals. Ternarisation
+does not make weight states more volatile for a given amount of parameter motion;
+the extra flips are bought with extra motion.
+
+### 4. Ternary flips stick harder
+
+Persistence (still in the new state one interval later): **ternary 0.866, float
+0.781**; at two intervals, 0.824 vs 0.740. Consistent with the STE pushing
+weights decisively across the boundary rather than leaving them oscillating.
+Resolution caveat: an "interval" here is 1000 steps, and k=2 has one sample, so
+spec §12 question 4 is settled mainly by the null arm.
+
+### Incidental fix
+
+`layer_delta` computed cosine in fp32 and returned **1.000073** — a value that
+cannot exist. Accumulation error over millions of elements; now float64, with a
+regression test. Worth noting because it would have gone into a plot unchallenged.
+
 ## Open items — the live list
 
 Closed:
