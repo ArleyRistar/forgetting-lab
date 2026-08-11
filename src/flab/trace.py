@@ -218,6 +218,8 @@ def load_task(
     n_eval: int = 200,
     seed: int = 0,
     tokenizer=None,
+    n_keys: int | None = None,
+    gen_seed: int = 0,
     max_length: int | None = None,
     variant: str = VARIANT,
     prompt_style: str = "flab",
@@ -234,7 +236,7 @@ def load_task(
 
     out, stats = {}, {}
     for split, want in (("train", n_train), ("eval", n_eval)):
-        rows = _read(name, split, variant)
+        rows = _read(name, split, variant, n_keys=n_keys, gen_seed=gen_seed)
         # Select *before* formatting. Tokenizing all 5000 rows to keep a
         # handful is the dominant cost of preparing a stage, and it made the
         # CPU test suite take minutes to run two training steps. Ordering is

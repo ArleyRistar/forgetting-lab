@@ -111,6 +111,12 @@ class RunConfig:
     reference: str = "lima"
     eval_split: str = "eval"
     seed: int = 0
+    # Synthetic-task generation. Hashed because they change every number a run
+    # produces: `n_keys` sets how many associations exist, and `gen_seed` picks
+    # the key->value assignment. Until 2026-08-11 neither reached the generator,
+    # so "200 keys x 3 seeds" would silently have been 50 keys x 1 assignment.
+    n_keys: int | None = None
+    gen_seed: int = 0
     mode: str = "lora"
     optim: str = "adamw_torch"
     stages: tuple[StageConfig, ...] = ()

@@ -170,11 +170,14 @@ def probe_task(
     variant: str = trace.VARIANT,
     prompt_style: str = "flab",
     split: str = "eval",
+    n_keys: int | None = None,
+    gen_seed: int = 0,
 ) -> TaskProbe:
     """Mean per-token NLL and token accuracy over one task's held-out answers."""
     t0 = time.perf_counter()
     examples, stats = trace.load_probe_examples(
-        task, n_eval=n_eval, seed=seed, variant=variant, split=split)
+        task, n_eval=n_eval, seed=seed, variant=variant, split=split,
+        n_keys=n_keys, gen_seed=gen_seed)
 
     encoded, n_trunc, n_dropped = [], 0, 0
     for ex in examples:
@@ -275,6 +278,7 @@ def probe_task(
 
 
 def probe_all(model, tokenizer, tasks: list[str], *, n_eval: int = 200,
+              n_keys: int | None = None, gen_seed: int = 0,
               max_length: int = 1024, batch_size: int = 4, seed: int = 0,
               variant: str = trace.VARIANT, prompt_style: str = "flab",
               split: str = "eval") -> dict:
@@ -295,7 +299,8 @@ def probe_all(model, tokenizer, tasks: list[str], *, n_eval: int = 200,
         torch.cuda.empty_cache()
     results = {t: probe_task(model, tokenizer, t, n_eval=n_eval, max_length=max_length,
                              batch_size=batch_size, seed=seed, variant=variant,
-                             prompt_style=prompt_style, split=split) for t in tasks}
+                             prompt_style=prompt_style, split=split,
+                             n_keys=n_keys, gen_seed=gen_seed) for t in tasks}
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     warnings = {t: r.warning for t, r in results.items() if r.warning}
@@ -338,13 +343,20 @@ class StabilityProbe:
 
 
 @torch.no_grad()
-def _next_token_logprobs(model, tokenizer, texts, device, batch_size, base=False):
+def _next_token_logprobs(model, tokenizer, texts, device, batch_size, base=False,
+                         fp32: bool = False):
     """log-softmax of the next-token distribution after each prompt.
 
     2606.27634 measures drift at exactly one position per reference example —
     the last non-padding token of the rendered prompt, i.e. the distribution the
     model would sample its first answer token from. Left-padding puts that
     position at the end for every row.
+
+    `fp32` disables autocast. Under bf16, batch 1 and batch 4 change matmul
+    shapes and reduction order, so results are not batch-invariant to better than
+    ~1e-2 — fine for a KL between two models scored identically, fatal for phase
+    2b, which compares log-probs of 1e-7 across separately-scored checkpoints and
+    asserts batch invariance as a guard. Costs a forward pass, nothing else.
     """
     out = []
     pad = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
@@ -357,7 +369,8 @@ def _next_token_logprobs(model, tokenizer, texts, device, batch_size, base=False
             ids[r, width - len(c):] = torch.tensor(c)
             attn[r, width - len(c):] = 1
         ids, attn = ids.to(device), attn.to(device)
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
+        with torch.autocast("cuda", dtype=torch.bfloat16,
+                            enabled=(device.type == "cuda" and not fp32)):
             logits = model(input_ids=ids, attention_mask=attn).logits
         out.append(F.log_softmax(logits[:, -1, :].float(), dim=-1))
     return torch.cat(out) if out else None

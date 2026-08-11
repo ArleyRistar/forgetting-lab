@@ -201,6 +201,7 @@ def _train_stage(cfg: RunConfig, model, tokenizer, index: int, out: Path) -> int
     n_train = None if stage.epochs else stage.max_steps * batch * accum
     data = trace.load_task(
         stage.task, n_train=n_train, n_eval=8, seed=cfg.seed,
+        n_keys=cfg.n_keys, gen_seed=cfg.gen_seed,
         tokenizer=tokenizer, max_length=cfg.train.max_length,
         variant=cfg.trace_variant, prompt_style=cfg.prompt_style,
         completion_only=cfg.train.completion_only,
@@ -247,7 +248,8 @@ def _probe_to_disk(cfg: RunConfig, model, tokenizer, run_dir: Path, name: str) -
         model, tokenizer, cfg.probe_tasks,
         n_eval=cfg.probe.n_eval, max_length=cfg.probe.max_length,
         batch_size=cfg.probe.batch_size, seed=cfg.seed, variant=cfg.trace_variant,
-        prompt_style=cfg.prompt_style, split=cfg.eval_split,
+        prompt_style=cfg.prompt_style,
+        n_keys=cfg.n_keys, gen_seed=cfg.gen_seed, split=cfg.eval_split,
     )
     if cfg.probe.reference_n:
         # Drift on a set the model never trains on. Cheap, and the only metric
