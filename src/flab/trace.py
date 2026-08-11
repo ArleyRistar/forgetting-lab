@@ -173,7 +173,7 @@ def load_task_eval_reference(
 
 def load_probe_examples(
     name: str, n_eval: int = 200, seed: int = 0, split: str = "eval",
-    variant: str = VARIANT,
+    variant: str = VARIANT, n_keys: int | None = None, gen_seed: int = 0,
 ) -> tuple[list[dict], dict]:
     """Held-out (prompt, answer) pairs for the NLL probe, plus honest counts.
 
@@ -182,20 +182,30 @@ def load_probe_examples(
     which is the property that matters: every boundary in a run must probe the
     *same* held-out examples, or the loss matrix is comparing different sets.
     """
-    rows = _read(name, split, variant)
+    rows = _read(name, split, variant, n_keys=n_keys, gen_seed=gen_seed)
     take = _order(len(rows), seed)[: min(n_eval, len(rows))]
     picked = [{"prompt": rows[i]["prompt"], "answer": rows[i]["answer"]} for i in take]
     stats = {"requested": n_eval, "used": len(picked), "available": len(rows)}
     return picked, stats
 
 
-def _read(task: str, split: str, variant: str = VARIANT) -> list[dict]:
+def _read(task: str, split: str, variant: str = VARIANT,
+          n_keys: int | None = None, gen_seed: int = 0) -> list[dict]:
     # Synthetic control tasks are generated, not vendored. They enter through
     # the same loader so the harness, probe and metrics need no special case —
     # a control that ran through a different code path would be validating a
     # different instrument than the one phase 2 uses.
+    #
+    # `n_keys` and `gen_seed` reach the generator. Until 2026-08-11 they did not:
+    # this called `synthetic.make(task, split)` with defaults, so asking for 200
+    # keys silently returned 50, and three "seeds" trained on the SAME seed-0
+    # key->value assignments in a different order. A phase-2b card was written
+    # asking for 200x3 before anyone checked that the request could be honoured.
     if task in synthetic.TASKS:
-        return synthetic.make(task, split)
+        kw = {"seed": gen_seed}
+        if n_keys is not None:
+            kw["n_keys"] = n_keys
+        return synthetic.make(task, split, **kw)
     path = ROOT / variant / task / f"{split}.json"
     if not path.is_file():
         raise FileNotFoundError(f"{path} missing — run scripts/fetch_trace.sh")

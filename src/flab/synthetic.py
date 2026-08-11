@@ -35,7 +35,7 @@ import hashlib
 VALUES = ["A", "B", "C", "D", "E", "F", "G", "H"]
 N_VALUES = len(VALUES)
 
-PAIRS = ("conflict", "disjoint")
+PAIRS = ("conflict", "disjoint", "placebo")
 TASKS = tuple(f"synth-{p}-{s}" for p in PAIRS for s in ("a", "b"))
 
 
@@ -72,7 +72,8 @@ def make(task: str, split: str, n_keys: int = 50, repeats: int = 4,
 
     # conflict: both sides share a key namespace, so B overwrites A's keys.
     # disjoint: each side gets its own namespace, so nothing collides.
-    namespace = pair if pair == "conflict" else f"{pair}-{side}"
+    namespace = ("conflict" if pair in ("conflict", "placebo")
+                 else f"{pair}-{side}")
 
     rows = []
     for i in range(n_keys):
@@ -82,9 +83,30 @@ def make(task: str, split: str, n_keys: int = 50, repeats: int = 4,
         v = VALUES[_rand(seed, side, namespace, i) % N_VALUES]
         if pair == "conflict" and side == "b":
             # Force a genuine conflict: never accidentally agree with A.
+            #
+            # Resampled from the 7 non-A letters, NOT bumped to the next one.
+            # The old `(index + 1) % N` bump made P(v_b = v_a + 1) = 25% instead
+            # of 12.5%, on adjacent token ids — an alignment between the two
+            # values that any per-letter analysis would read as signal. Measured
+            # 2026-08-11; it plausibly produced the placebo-condition trace that
+            # made the first sub-behavioural result look real.
             va = VALUES[_rand(seed, "a", namespace, i) % N_VALUES]
             if v == va:
-                v = VALUES[(VALUES.index(v) + 1) % N_VALUES]
+                others = [x for x in VALUES if x != va]
+                v = others[_rand(seed, "b-resample", namespace, i) % len(others)]
+        elif pair == "placebo":
+            # Placebo A': same keys, a value that is neither A's nor B's, so
+            # training it teaches nothing about either and every key still has a
+            # genuine conflict during B. A plain permutation would hand ~1/8 of
+            # keys the very letter being measured.
+            va = VALUES[_rand(seed, "a", "conflict", i) % N_VALUES]
+            vb_raw = VALUES[_rand(seed, "b", "conflict", i) % N_VALUES]
+            vb = vb_raw
+            if vb_raw == va:
+                others = [x for x in VALUES if x != va]
+                vb = others[_rand(seed, "b-resample", "conflict", i) % len(others)]
+            allowed = [x for x in VALUES if x not in (va, vb)]
+            v = allowed[_rand(seed, "placebo", "conflict", i) % len(allowed)]
         rows.extend([{
             "prompt": f"The key {k} maps to which value? Answer with one letter.",
             "answer": v,
