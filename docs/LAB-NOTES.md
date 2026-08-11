@@ -3039,6 +3039,100 @@ Recorded rather than fixed: the next card decides whether this is worth another
 ~2 GPU-h, and that is Arley's call. The honest default is that it is a *lead*,
 and phase 2's reportable results remain the instrument findings and H1.
 
+## 2026-08-11 — PHASE 2B: a trace survives in BOTH arms, and it is LARGER in the float twin
+
+24 runs (2 arms × 3 seeds × {A, placebo A′, B-from-A, B-from-A′}), 200 keys,
+generator seed varying with the run seed. Scored through
+`probes._next_token_logprobs` — the audited path, not a reimplementation —
+in fp32, and analysed with the two-way fixed-effects estimator.
+
+| arm | per-seed contrasts | mean ± seed SE | 95% CI (t, 2 df) |
+| --- | --- | ---: | --- |
+| ternary | +0.444, +0.379, +0.367 | **+0.397 ± 0.024** | [+0.295, +0.499] |
+| float | +0.870, +0.713, +0.947 | **+0.843 ± 0.069** | [+0.547, +1.139] |
+
+**A sub-behavioural trace of the overwritten value survives in both arms**, and
+it is **roughly twice as large in the float twin**. Arm difference −0.446, far
+outside the scoring noise below.
+
+That is the **opposite** of the direction the retracted H2 claim pointed, and it
+agrees with phase 2's behavioural result, where the float twin retained *more* on
+the disjoint pair (0.60 vs 0.40 accuracy). Both the behavioural and the
+sub-behavioural evidence now say the same thing: **on this pair, at this budget,
+the float twin retains more of what it learned.**
+
+### The placebo gate — the load-bearing control — passes
+
+γ_v1 in the condition where v1 was **never taught**:
+
+| arm | s0 | s1 | s2 |
+| --- | ---: | ---: | ---: |
+| ternary | −0.004 | +0.008 | +0.057 |
+| float | +0.214 | +0.079 | −0.149 |
+
+Worst |γ| is 0.214 against the pre-registered margin of 0.3 — **PASS**. The
+ternary arm's placebo is essentially exactly zero, which is what an uncontaminated
+estimator looks like. The float arm's is noisier and is the reason its contrast
+carries a wider interval.
+
+### The batch-invariance gate fired, and investigating it was the right call
+
+Measured drift between batch 1 and batch 8 scoring: **median 0.27, max 1.43 in
+log-prob units** — comparable to the ternary effect itself. Investigated rather
+than waved through, because "max 1.93, probably fine" would have been the eighth
+instance of this project's failure class.
+
+It is **not** a bug. Ruled out: RoPE position shift under left-padding (passing
+`position_ids` derived from the mask changes nothing — max identical at 1.4275),
+and tail artefacts (no cell sits below log p −20; all 224 are in the signal
+range). It is genuine fp32 sensitivity: with p(v2) at 0.9999, the non-v2 logits
+are far enough into the tail that a modest relative error in *p* is a large
+change in *log p*, and 32 layers of fp32 accumulation supplies it.
+
+**What matters is whether the estimate is invariant, not the cells** — the FE fit
+averages ~1400 cells and the paired contrast scores both conditions identically,
+so zero-mean noise cancels. Measured directly:
+
+| batch | γ_v1(AB) | γ_v1(PB) | contrast |
+| ---: | ---: | ---: | ---: |
+| 1 | +0.3592 | +0.0216 | +0.3956 |
+| 4 | +0.3715 | −0.0117 | +0.4401 |
+
+γ(AB) moves 0.012, the contrast 0.045. **So the seed SE of ±0.024 understates the
+uncertainty**: it captures between-seed variation only, and scoring noise adds
+~±0.045 on top. Honest total uncertainty on the ternary contrast is nearer ±0.06,
+which still leaves it ~6 SE from zero and leaves the 0.446 arm difference
+comfortably resolved.
+
+The card pre-registered a batch-invariance assertion at the *cell* level with a
+measured tolerance. That was the wrong level — cells are irreducibly noisy here
+and the estimate is what gets reported. **Future cards should assert invariance
+of the reported quantity.**
+
+### What this does and does not establish
+
+**Does:** a trace of an overwritten association survives below the behavioural
+floor in both a ternary and a float model; it is about twice as large in the
+float twin; and a matched placebo that never saw the value shows no such trace,
+so the estimator is measuring memory rather than letter priors or tokenizer
+geometry.
+
+**Does not:** rehabilitate anything about ternary retention. Both arms reach zero
+task-A accuracy on conflict; this is all below what the model would ever emit.
+Nor does it generalise past this pair, this budget and lr 1e-4 — and the
+generator changed (the v2 collision bump is gone), so these numbers are not
+comparable to phase 2's.
+
+### Implementation notes worth keeping
+
+- `n_keys`/`gen_seed` now reach the generator through `trace`, `load_task`,
+  `load_probe_examples`, `probe_task`, `probe_all` and `RunConfig` (hashed). They
+  did not before, so "200 keys × 3 seeds" would have been 50 keys × 1 assignment.
+- The generator's collision bump is gone: P(v2 = v1+1) is 0.138 against 1/7.
+- `flab.fe`'s planted-γ test caught a **14% downward bias** in the paired
+  contrast — the v1 cell sits inside the key mean it is measured against, so a
+  planted 0.65 returned 0.557. Corrected by n/(n−1).
+
 ## Open items — the live list
 
 Closed:
