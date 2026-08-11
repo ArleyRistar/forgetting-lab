@@ -2653,7 +2653,59 @@ switching (these are internal xHCI root hubs, which typically do not). Left
 permanently on by decision — at ~2.5 W the saving from cycling it is negligible
 against the cost of a bug that leaves it off during a thermally-limited run.
 
-## 2026-08-11 — PHASE 2 RESULTS: H1 refuted, H2 confirmed under control
+## 2026-08-11 — RETRACTION: "H2 confirmed" was wrong. Read this before the entry below.
+
+**The H2 claim in the entry below is withdrawn.** Adversarial review found the
+refutation in this project's own probe files, in a field I never looked at.
+
+Every `probe-after-0.json` records `token_acc` beside `nll`. On the conflict pair
+at 100 and 300 steps — the exact cells I called the result:
+
+| pair | steps | arm | task-A token accuracy | task-A NLL |
+| --- | ---: | --- | --- | --- |
+| conflict | 100 | ternary | **0.00, 0.00, 0.00** | 8.36, 9.82, 9.25 |
+| conflict | 100 | float | **0.00, 0.00, 0.00** | 15.71, 14.95, 14.61 |
+| conflict | 300 | ternary | **0.00, 0.00, 0.00** | 11.92, 13.06, 12.10 |
+| conflict | 300 | float | **0.00, 0.00, 0.00** | 16.39, 15.76, 15.26 |
+
+**Both arms forget task A completely and identically.** Retention is zero
+everywhere. The ~6-nat "ternary forgets less" gap is entirely in the
+log-probability of a token *neither model ever predicts*. At 7–14 nats above the
+chance level of 2.08 the comparison is between p≈1e-4 and p≈1e-7 — that is
+softmax tail geometry, not memory.
+
+**And where retention is behaviourally measurable, the direction reverses:**
+
+| pair | steps | ternary token acc | float token acc |
+| --- | ---: | --- | --- |
+| disjoint | 100 | 0.54, 0.48, 0.54 | 0.56, 0.60, 0.64 |
+| disjoint | 300 | **0.34, 0.46, 0.40** | **0.60, 0.60, 0.60** |
+
+The ternary twin retains **less**, not more — a ~0.2 accuracy gap at 300 steps
+that I wrote up as "disjoint shows no gap" because I only looked at the nats
+(+3.18 vs +2.30), which by the same 2.5-sd standard I used to headline conflict
+was already a real effect in the opposite direction.
+
+**"Both arms master B identically" was also wrong.** At 100 steps ternary B-NLL
+is 0.000532/0.000882 against float's 0.000075/0.000118 — 7x apart in probability.
+Since A's NLL is bounded below by −log(1−p(v₂)), that gap alone mechanically
+forces ~2 of the 5.94 nats I attributed to retention. I rounded these to
+"0.0007/0.0001" and called them identical.
+
+**One mechanism explains all of it with zero retention:** the ternary model is
+less confident when right, less confidently wrong when wrong, and worse on
+non-conflicting recall. That is logit-range compression in the quantised forward
+pass — a calibration property of BitLinear — not latent-weight hysteresis.
+
+**This is the fifth instance of this project's signature failure**, and the most
+expensive: the metric measured something other than what its name claims. The
+turn-terminator artefact was identical in shape and was caught the same way, by
+looking at an accuracy that was sitting in the output all along. I had
+`token_acc` in every probe file for the whole sweep and analysed only NLL.
+
+What survives is in the corrected summary at the end of the entry below.
+
+## 2026-08-11 — PHASE 2 RESULTS: H1 refuted, H2 **RETRACTED** (see retraction above)
 
 72 runs: 2 arms x 2 pairs x 3 B-budgets x 3 seeds, plus a `same`-task null in
 every cell. Forgetting measured against each twin's own post-A checkpoint (item
@@ -2753,6 +2805,57 @@ specific to *direct overwriting*, not to interference in general.
 Scale-driven flips remain negligible: mean **0.00028%** of flips, max 0.00096%,
 across all 36 ternary runs. Phase 1d's finding holds under distribution shift,
 which is the caveat that entry explicitly left open.
+
+### CORRECTED SUMMARY (supersedes the H2 section above)
+
+**Safe to report:**
+
+1. **The instrument result.** A same-task null gives a harness floor of 0.0126
+   nats, and "unrelated" training causes ~2 nats and a 0.2-accuracy drop of real
+   interference. The spec's assumption that `disjoint` is the noise floor is
+   refuted; using it as a baseline would have subtracted a genuine effect.
+2. **H1 refuted**, on the strength of the ratio rather than the regressions:
+   flips/L2 is 0.000198–0.000222 across all 72 runs and phase 1d's 20x L2 range,
+   so flips are a fixed rescaling of L2 and cannot out-predict it. Scope it: a
+   mid-conversion twin, lr 1e-4, synthetic recall. Note the float arm is the
+   stronger sentence — its task-driven flips exceed its own null by 1.8–10.8x and
+   the ratio still does not move.
+3. **An unexplained calibration effect**, stated as an observation with its
+   falsifier attached: on direct overwrites both models forget completely, but
+   the ternary model is less confidently wrong — and also less confident when
+   right, and behaviourally worse on non-conflicting recall.
+
+**Must not be claimed:** "ternary forgets less"; "retains more of A"; "at matched
+capability" (false at 100 steps, and retained capability is zero in both arms);
+the concentration R² gain as evidence (it is confounded with budget —
+corr(gini, log steps) = −0.877 ternary, +0.784 float, so the "opposite signs"
+are largely a schedule artefact); any per-25-step forgetting-curve or
+flip-persistence claim.
+
+### Three card commitments that silently failed
+
+Recorded rather than buried:
+
+1. **The per-25-step checkpoints never existed.** `cfg_for` takes a `save_steps`
+   argument and never passes it to `RunConfig`; `sequential.py` hardcodes
+   `save_steps=50, save_total_limit=2` as rotating crash insurance. So the card's
+   flip-**persistence** predictor and its "H2 burstiness comes free" both had no
+   data behind them, and I did not notice their absence.
+2. **KL-to-base and the embedding covariate were not computed** — `reference_n=0`
+   disables the KL probe. Item 19 has now been promised and dropped **twice**.
+3. **All checkpoints were pruned**, A-checkpoints included, so every follow-up on
+   these runs needs retraining. Keep one seed next time.
+
+### The falsifiers, for whoever runs them (~0.5 GPU-h, needs one cell retrained)
+
+- **Renormalised retention:** per key, p(v₁)/(1−p(v₂)), or v₁'s rank among the 7
+  non-B letters. Real retention puts v₁ well above the 1/7 share; an entropy floor
+  puts it level with the distractors in both arms.
+- **B-only control:** train B from the twin without ever teaching A, then score
+  v₁. If it matches the A→B run, measured "retention" is zero and the arm gap is
+  baseline calibration.
+- **Distractor NLL:** score a never-taught letter. If ternary's is also nats below
+  float's, the gap is generic tail mass.
 
 ### Caveat on the B-mastery check
 
