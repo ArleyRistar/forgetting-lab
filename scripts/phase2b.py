@@ -82,7 +82,12 @@ def main():
         tok.pad_token = tok.eos_token
     ROOT.mkdir(parents=True, exist_ok=True)
     t0 = time.perf_counter()
-    index = []
+    # Merge, do not overwrite. phase2.py had exactly this bug: `index = []` plus
+    # one invocation per cell means the last invocation's file is the only one
+    # left. Fixed there on 2026-08-10 and then reintroduced here by writing a new
+    # script instead of copying the fixed one.
+    idx_path = ROOT / "index.json"
+    index = json.loads(idx_path.read_text()) if idx_path.is_file() else []
 
     for arm in a.arms.split(","):
         ternary = arm == "ternary"
@@ -93,9 +98,11 @@ def main():
             p_ck = run_one(arm, f"{arm}-P-s{seed}", twin, "synth-placebo-a", seed, tok, ternary)
             ab = run_one(arm, f"{arm}-AB-s{seed}", a_ck, "synth-conflict-b", seed, tok, ternary)
             pb = run_one(arm, f"{arm}-PB-s{seed}", p_ck, "synth-conflict-b", seed, tok, ternary)
+            index = [c for c in index
+                     if not (c["arm"] == arm and c["seed"] == seed)]
             index.append({"arm": arm, "seed": seed, "AB": ab, "PB": pb,
                           "A": a_ck, "P": p_ck})
-            (ROOT / "index.json").write_text(json.dumps(index, indent=2))
+            idx_path.write_text(json.dumps(index, indent=2))
 
     print(f"\n{len(index)} (arm,seed) cells in {(time.perf_counter()-t0)/60:.1f} min")
 

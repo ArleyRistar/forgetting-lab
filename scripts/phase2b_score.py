@@ -83,7 +83,21 @@ def main() -> None:
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     ids = letter_ids(tok)
-    index = json.loads((ROOT / "index.json").read_text())
+    # Paths are deterministic, so derive them rather than trusting a manifest —
+    # `index.json` was overwritten once already by a runner that did not merge.
+    # Any cell whose checkpoints are actually on disk is scored.
+    index = []
+    for arm in ("ternary", "float"):
+        for seed in (0, 1, 2):
+            ab = ROOT / f"{arm}-AB-s{seed}" / f"stage-0-{TASK_B}"
+            pb = ROOT / f"{arm}-PB-s{seed}" / f"stage-0-{TASK_B}"
+            if (ab / "model.safetensors").is_file() and \
+               (pb / "model.safetensors").is_file():
+                index.append({"arm": arm, "seed": seed,
+                              "AB": str(ab), "PB": str(pb)})
+    print(f"{len(index)} of 6 cells have both checkpoints on disk", flush=True)
+    if not index:
+        raise SystemExit("no scorable cells")
 
     out = {"n_keys": N_KEYS, "placebo_margin": PLACEBO_MARGIN, "cells": [],
            "batch_invariance": {}, "gates": {}}
