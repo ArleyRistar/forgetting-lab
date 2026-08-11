@@ -80,14 +80,22 @@ def letter_probs(model, tok, prompts: list[str], ids: dict[str, int],
                                         prompt_style="flab", task=task)
             enc.append(full[:-1])          # prefix up to the answer position
         width = max(len(e) for e in enc)
-        # LEFT-pad so the final position is the answer position for every row.
+        # LEFT-pad so the final position is the answer position for every row —
+        # and PASS THE MASK. Without it the pad tokens are attended as real
+        # context and RoPE positions shift, which contaminated 30 of 50 rows and
+        # produced every headline number in the first version of this script
+        # (5.30 / 0.15 / 12.89 all collapse to ~1.1-1.9 once masked). The correct
+        # pattern was already in probes.py:355-361 and was not copied.
         inp = torch.full((len(chunk), width), pad, dtype=torch.long)
+        attn = torch.zeros((len(chunk), width), dtype=torch.long)
         for r, e in enumerate(enc):
             inp[r, width - len(e):] = torch.tensor(e)
-        inp = inp.to(device)
+            attn[r, width - len(e):] = 1
+        inp, attn = inp.to(device), attn.to(device)
         with torch.autocast("cuda", dtype=torch.bfloat16,
                             enabled=device.type == "cuda"):
-            logits = model(input_ids=inp).logits[:, -1, :].float()
+            logits = model(input_ids=inp,
+                           attention_mask=attn).logits[:, -1, :].float()
         probs = torch.softmax(logits, dim=-1)[:, cols]
         for r in range(len(chunk)):
             out.append({v: float(probs[r, j]) for j, v in enumerate(order)})

@@ -2906,7 +2906,76 @@ output files every time — `content_acc` for the turn terminator, `token_acc`
 here — so the fix is that the analysis path refuses to produce the claim, not
 that someone remembers to look.
 
-## 2026-08-11 — H2 falsifiers: INCONCLUSIVE, and the instrument is the problem
+## 2026-08-11 — CORRECTION: the falsifier attended to its own padding
+
+**The entry below is wrong, including its correction of the entry before it.**
+Instrument review found that `h2_falsifier.py` left-padded each batch and called
+`model(input_ids=inp)` **with no attention mask** (line 90). The pad tokens were
+attended as real context and RoPE positions shifted; prefix lengths vary 33–36
+tokens across the 50 keys, so **30 of 50 rows were contaminated**, by an amount
+depending on which batch of four a prompt happened to land in.
+
+Adding the mask — one line — collapses every headline number. Re-measured here,
+reproducing the reviewer's figures exactly:
+
+| cell | as written | **masked** | batch-1, no padding |
+| --- | ---: | ---: | ---: |
+| ternary A→B | 5.295 | **1.824** | 1.902 |
+| ternary B-only | 1.127 | **1.601** | 1.392 |
+| float A→B | 0.149 | **1.148** | 1.153 |
+| float B-only | **12.889** | **1.522** | 1.566 |
+
+**So the "unstable arm-dependent baseline" the entry below is built on was the
+bug itself.** Corrected, all four cells sit between 1.15 and 1.82. There is no
+11x baseline gap, no float "active suppression" to 0.15, and no ternary 5.3x
+elevation. The instrument was measuring padding.
+
+`probes.py:355-361` already left-pads **and** masks, and passes
+`attention_mask=attn`. The correct implementation was forty lines away in this
+repo and I wrote a new one without it.
+
+**What survives, from the reviewer's letter-fixed-effects analysis** (log p =
+key + letter + γ·1[letter=v1] over non-v2 cells, which is the right estimator
+because letter marginals are not exchangeable — see below):
+
+| arm | γ, A→B | γ, B-only | retention contrast |
+| --- | ---: | ---: | ---: |
+| ternary | +1.32 ± 0.23 | +0.67 ± 0.28 | **+0.65 ± 0.36 (~1.8σ)** |
+| float | +0.56 ± 0.33 | −0.01 ± 0.57 | **+0.57 ± 0.66 (~0.9σ)** |
+
+**Same sign in both arms.** "Ternary retains, float suppresses" is dead. What is
+left is a possible ~0.6 log-unit sub-behavioural retention trace in *both* arms,
+at 1.8σ and 0.9σ on one seed — a lead, and no longer a ternary-specific one.
+
+**Two further defects in the design**, both to fix before any rerun:
+
+1. **"Never-taught distractors" do not exist.** Every one of the 8 letters is a
+   trained B-answer for 2–12 other keys and an A-value for 2–13, so only
+   *within-key* identity separates v1 from a distractor and any across-letter
+   mean is contaminated by letter marginals. The fixed-effects estimator above is
+   the fix; the raw ratio should not be reported again.
+2. **The generator biases the control.** `synthetic.py:85-87` resolves a v1/v2
+   collision by taking the *next* letter, so P(v2 = v1+1 mod 8) is 25% rather
+   than 12.5%, on adjacent token ids. That plausibly explains the ternary B-only
+   γ of +0.67 with A never taught. Resample v2 uniformly from the 7 non-v1
+   letters instead.
+3. B-only is the right question but imperfectly matched — 300 steps vs 600, and
+   for the ternary arm the extra steps also continue conversion. A **placebo-A**
+   (train A′ with permuted values on the same keys, then B) matches budget and
+   isolates "was v1 taught".
+
+**This is the sixth instance of the same failure class in this project**, and the
+second in a row inside the instrument built to check the fifth. The pattern is no
+longer "a metric that measures the wrong object" — it is **writing a new
+measurement path instead of reusing the audited one**. `probes.py` had the mask.
+`sequential.checkpoint_ok` had the weights-exist check I re-learned three times
+today. The fix is not more care; it is not writing a second implementation.
+
+A cheap check that would have caught this in seconds and was available all along:
+the recorded p(v2) was 0.9961, i.e. 3.9e-3 nats, against the probe's own measured
+2.0e-5 for the same model and prompts — a 200x mismatch, waved through as "~1.0".
+
+## 2026-08-11 — H2 falsifiers: SUPERSEDED — see the correction above
 
 Ran the three falsifiers the review specified, on conflict/seed 0/300 steps
 (the cell had to be retrained — everything was pruned). Both twins reach
