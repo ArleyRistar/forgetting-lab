@@ -2866,6 +2866,46 @@ predictor analyses use all 72 runs**, but the B-mastery confound check above use
 **seeds 1–2 only, n=2 per cell**. The pattern (identical mastery at 100/300
 steps) is unambiguous but rests on fewer runs than the headline numbers.
 
+## 2026-08-11 — a guard so this class of error cannot recur silently
+
+`src/flab/claims.py`, wired into `phase2_analysis.py`, 8 tests using the actual
+retracted numbers. Two rules:
+
+1. **A forgetting claim needs a behavioural witness.** If accuracy is at floor in
+   every arm, there is no retention to compare and an NLL difference cannot be
+   called one.
+2. **An NLL more than 2 nats above a task's chance level is outside its useful
+   range.** Past that, differences compare softmax tail mass; a model 7 nats above
+   chance is not "remembering less", it is confidently wrong.
+
+Plus `check_matched_capability`, which compares on the **ratio**: 0.000532 vs
+0.000075 was written up as identical because both round to ~0.000, and it is 7x.
+
+Re-running the analysis with the guard in place flags exactly the cells that were
+wrong and clears the ones that were not:
+
+| cell | accuracies | verdict |
+| --- | --- | --- |
+| conflict 100 | ternary 0.00, float 0.00 | **NOT A RETENTION CLAIM** |
+| conflict 300 | ternary 0.00, float 0.00 | **NOT A RETENTION CLAIM** |
+| disjoint 100 | ternary 0.52, float 0.60 | OK |
+| disjoint 300 | ternary 0.40, float 0.60 | OK |
+
+**The surviving behavioural result is the one that points the other way:** where
+retention is measurable at all, the float twin keeps more.
+
+One new observation the guard surfaced: **conflict at 25 steps passes** — ternary
+0.10 accuracy against float 0.007, a real behavioural gap favouring ternary. It
+stays unusable because that is the budget where ternary had not mastered B
+(B-NLL 1.084 vs 0.357), so it is confounded exactly as the retraction says. If the
+falsifiers show the calibration story is wrong, this cell is where to look next.
+
+**Why a guard rather than more review.** Adversarial review caught three of the
+five instances of this failure shape. That is luck. The right number was in the
+output files every time — `content_acc` for the turn terminator, `token_acc`
+here — so the fix is that the analysis path refuses to produce the claim, not
+that someone remembers to look.
+
 ## Open items — the live list
 
 Closed:

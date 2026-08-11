@@ -24,7 +24,23 @@ from pathlib import Path
 import numpy as np
 from scipy import stats
 
+from flab import claims, synthetic
+
 ROOT = Path("outputs/phase2")
+
+
+def token_acc(arm: str, pair: str, seed: int, cond: str, steps: int,
+              task: str) -> float | None:
+    """The behavioural witness, read from the probe file it has always been in.
+
+    The retracted H2 claim came from analysing `nll` and never opening `token_acc`
+    in the same JSON, across all 72 runs.
+    """
+    f = (ROOT / f"{arm}-{pair}-s{seed}-B{cond}-{steps}" / "probe-after-0.json")
+    if not f.is_file():
+        return None
+    d = json.loads(f.read_text())["tasks"].get(task)
+    return d["token_acc"] if d else None
 
 
 def corr(x, y):
@@ -108,6 +124,8 @@ def main() -> None:
 
     # ---- 3. H2 ---------------------------------------------------------
     print("\n=== H2: ternary vs float forgetting, matched budget ===")
+    print("    each cell is checked by flab.claims before it may be called a")
+    print("    retention difference — see the 2026-08-11 retraction.")
     h2 = {}
     for pair in ("conflict", "disjoint"):
         for steps in (25, 100, 300):
@@ -120,9 +138,34 @@ def main() -> None:
                 g[arm] = (float(np.mean(f)), float(np.std(f, ddof=1)) if len(f) > 1 else None, len(f))
             h2[f"{pair}-{steps}"] = g
             t, fl = g["ternary"], g["float"]
-            print(f"  {pair:<9}{steps:>4} steps   ternary {t[0]:+8.4f} (sd {t[1]:.4f}, n={t[2]})"
-                  f"   float {fl[0]:+8.4f} (sd {fl[1]:.4f}, n={fl[2]})"
-                  f"   diff {t[0]-fl[0]:+.4f}")
+
+            # The guard: does this cell support a retention claim at all?
+            task_a = f"synth-{pair}-a"
+            accs = {}
+            nll_abs = {}
+            for arm in ("ternary", "float"):
+                a_vals = [token_acc(arm, pair, sd, "shift", steps, task_a)
+                          for sd in (0, 1, 2)]
+                a_vals = [v for v in a_vals if v is not None]
+                accs[arm] = float(np.mean(a_vals)) if a_vals else None
+                base = [r["nll_a_at_A"] for r in json.loads(
+                            (ROOT / "results.json").read_text())
+                        if r["arm"] == arm and r["pair"] == pair
+                        and r["b_steps"] == steps and r["condition"] == "shift"]
+                nll_abs[arm] = (float(np.mean(base)) + g[arm][0]) if base else g[arm][0]
+            chk = claims.check_forgetting_claim(
+                nlls=nll_abs, accuracies=accs,
+                chance_nll=synthetic.chance_nll(), accuracy_floor=0.0)
+            h2[f"{pair}-{steps}"]["accuracies"] = accs
+            h2[f"{pair}-{steps}"]["reportable_as_retention"] = chk.ok
+            h2[f"{pair}-{steps}"]["guard_reasons"] = chk.reasons
+
+            flag = "OK" if chk.ok else "NOT A RETENTION CLAIM"
+            print(f"  {pair:<9}{steps:>4} steps   ternary {t[0]:+8.4f} (sd {t[1]:.4f})"
+                  f"   float {fl[0]:+8.4f} (sd {fl[1]:.4f})"
+                  f"   diff {t[0]-fl[0]:+.4f}   acc {accs}  [{flag}]")
+            for r in chk.reasons:
+                print(f"        ! {r}")
     out["h2"] = h2
 
     # ---- 4. flips/L2 ---------------------------------------------------
