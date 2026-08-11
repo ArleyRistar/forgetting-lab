@@ -155,9 +155,16 @@ def main() -> None:
                     for steps in budgets:
                         tag = f"{arm}-{pair}-s{seed}-B{cond}-{steps}"
                         b_dir = ROOT / tag
-                        if (b_dir / "COMPLETE").exists():
+                        # Same weights-exist check as the A stage: a COMPLETE
+                        # marker survives pruning but the weights do not, and a
+                        # skip here silently produces no checkpoint for anything
+                        # downstream to score. Fixing this for A only is what
+                        # made the H2 falsifier retrain a no-op.
+                        b_weights = b_dir / f"stage-0-{tb}" / "model.safetensors"
+                        if (b_dir / "COMPLETE").exists() and b_weights.is_file():
                             print(f"  skip {tag} (done)", flush=True)
                         else:
+                            shutil.rmtree(b_dir, ignore_errors=True)
                             print(f"  B[{cond}] {steps} steps: {tag}", flush=True)
                             model, _ = load_arm(a_ckpt, ternary)
                             sequential.run(

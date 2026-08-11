@@ -2906,6 +2906,70 @@ output files every time — `content_acc` for the turn terminator, `token_acc`
 here — so the fix is that the analysis path refuses to produce the claim, not
 that someone remembers to look.
 
+## 2026-08-11 — H2 falsifiers: INCONCLUSIVE, and the instrument is the problem
+
+Ran the three falsifiers the review specified, on conflict/seed 0/300 steps
+(the cell had to be retrained — everything was pruned). Both twins reach
+p(v2) ~ 0.996 on the shared prompts, matching the B-NLL ~0.0000 measured in the
+sweep, so the models are behaving as expected.
+
+| condition | | ternary | float |
+| --- | --- | ---: | ---: |
+| **A then B** | p(v1) | 0.001809 | 0.000005 |
+| | distractor | 0.000342 | 0.000036 |
+| | **v1/distractor** | **5.30** | **0.15** |
+| | v1 top among non-B | 26% | 12% |
+| **B-only (A never taught)** | p(v1) | 0.000884 | 0.000040 |
+| | distractor | 0.000784 | 0.000003 |
+| | **v1/distractor** | **1.13** | **12.89** |
+| | v1 top among non-B | 18% | 16% |
+
+### The B-only control breaks the metric, which is why it was worth running
+
+**The float model puts v1 12.9x above never-taught letters having never learned
+A.** There is no memory to explain that: it is baseline — the eight values are not
+equally likely a priori, and float's distractor mass is 3e-6, so the ratio is a
+quotient of two tiny numbers and is wildly unstable. **The v1/distractor ratio
+therefore cannot be compared across arms**, which is exactly what the headline
+"5.30 vs 0.15" did.
+
+Referenced to each arm's own B-only baseline the picture is more defensible:
+ternary rises 1.13 → 5.30 (x4.7) when A is taught first, float falls 12.89 → 0.15
+(÷86). Opposite directions, and the float direction is interesting on its own —
+teaching A and then overwriting it leaves v1 **less** likely than a letter the
+model never saw, which is active suppression rather than mere forgetting.
+
+But the robust statistic does not support either at this n. v1's share of
+top-non-B rank moves 18% → 26% (ternary) and 16% → 12% (float), against a 14%
+chance level. At n=50 keys those are ~1.4 and ~0.7 SE. **One seed.**
+
+### Verdict
+
+**Inconclusive.** The entropy-floor explanation is not cleanly rejected and
+residual retention is not established. The direction is suggestive — ternary
+retains a sub-behavioural trace, float actively suppresses — but the evidence is
+one seed, 50 keys, and a ratio whose baseline differs 11x between arms for
+reasons unrelated to memory.
+
+What is **not** in doubt, from the retraction: both arms reach zero task-A
+accuracy on conflict, so nothing here rehabilitates "ternary forgets less".
+Whatever this trace is, it is below the behavioural floor.
+
+### What the instrument needs before it can decide anything
+
+1. **A ratio with a stable denominator.** 3e-6 distractor mass makes the current
+   one useless; use the rank statistic, or the log-odds of v1 against the pooled
+   non-B set, as the primary.
+2. **Seeds.** 3 minimum, per the spec's own rule for result-bearing runs. This was
+   one.
+3. **Baseline-referenced reporting only.** Every number must be a change against
+   that arm's own B-only control, never an across-arm comparison of raw ratios.
+4. More keys than 50 — the synth generator takes `n_keys`, so this is free.
+
+Recorded rather than fixed: the next card decides whether this is worth another
+~2 GPU-h, and that is Arley's call. The honest default is that it is a *lead*,
+and phase 2's reportable results remain the instrument findings and H1.
+
 ## Open items — the live list
 
 Closed:
