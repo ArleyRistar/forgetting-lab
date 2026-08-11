@@ -119,9 +119,21 @@ def main() -> None:
             shutil.rmtree(b_ck, ignore_errors=True)
 
     if a.prune:
-        # A-checkpoints are shared by every branch, so they go only at the end.
+        # A-checkpoints are shared by every branch, so one may only go when EVERY
+        # row depending on it has metrics. Deleting them wholesale broke the next
+        # chunk, which branches from an A trained in an earlier chunk.
+        have = {r["key"] for r in result}
+        needed_by = {}
         for row in rows:
-            shutil.rmtree(Path(row["a_ckpt"]), ignore_errors=True)
+            key = f"{row['arm']}-{row['pair']}-s{row['seed']}-{row['condition']}-{row['b_steps']}"
+            needed_by.setdefault(row["a_ckpt"], []).append(key)
+        for a_ckpt, keys in needed_by.items():
+            if all(k in have for k in keys):
+                shutil.rmtree(Path(a_ckpt), ignore_errors=True)
+            else:
+                missing = [k for k in keys if k not in have]
+                print(f"  keeping {a_ckpt} ({len(missing)} rows still pending)",
+                      flush=True)
         print("pruned checkpoints; metrics retained", flush=True)
     print(f"\n{len(result)} rows -> {out_path}")
 

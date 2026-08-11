@@ -2653,6 +2653,116 @@ switching (these are internal xHCI root hubs, which typically do not). Left
 permanently on by decision — at ~2.5 W the saving from cycling it is negligible
 against the cost of a bug that leaves it off during a thermally-limited run.
 
+## 2026-08-11 — PHASE 2 RESULTS: H1 refuted, H2 confirmed under control
+
+72 runs: 2 arms x 2 pairs x 3 B-budgets x 3 seeds, plus a `same`-task null in
+every cell. Forgetting measured against each twin's own post-A checkpoint (item
+31). Full numbers in `outputs/phase2/analysis.json`.
+
+### The pre-registered gates pass
+
+| condition | ternary | float |
+| --- | ---: | ---: |
+| `same` (harness floor) | mean +0.0020, max abs **0.0126** | mean +0.0000, max abs **0.0004** |
+| conflict shift | mean **+7.95** | mean **+11.64** |
+| disjoint shift | mean +2.15 | mean +1.83 |
+
+The harness floor is **0.0126 nats**, and conflict is large in both arms as
+analytically required. Both gates hold, so the rest is interpretable.
+
+The `same` condition also settles what the pilot flagged: **disjoint is not the
+noise floor** the spec assumed. At ~2 nats it is three orders of magnitude above
+the harness floor. It is real forgetting from unrelated training, and using it as
+a baseline — as `synthetic.py`'s docstring proposes — would have subtracted a
+genuine effect out of every result.
+
+### H1 is REFUTED, exactly as the card pre-registered
+
+In the ternary arm, across 18 shift runs:
+
+| predictor of forgetting | Pearson | Spearman | R² alone |
+| --- | ---: | ---: | ---: |
+| flip fraction | +0.5952 | +0.8019 | 0.3542 |
+| L2 distance | +0.6006 | +0.7977 | 0.3607 |
+
+**Indistinguishable, with flips marginally worse.** H1 claimed flips predict
+forgetting *better* than parameter distance; they do not.
+
+The mechanism is the one phase 1d identified. `flips/L2` under task shift is
+**0.000209** (ternary), against **0.000212** for the same-task null and
+0.000199–0.000208 for phase 1d's diffuse drift. The ratio does not move.
+Task shift does not produce structurally different weight motion at this scale —
+flips remain a rescaled L2, so they cannot carry information L2 lacks.
+
+The card stated this outcome in advance and said to report it rather than hunt a
+variant that rescues the hypothesis. Doing that.
+
+### One lead worth following: concentration, ternary only
+
+Adding **per-layer flip concentration** (Gini across the 224 tensors) to L2:
+
+| arm | R² L2 only | R² L2 + concentration | gain |
+| --- | ---: | ---: | ---: |
+| ternary | 0.3607 | **0.5375** | **+0.177** |
+| float | 0.6343 | 0.6394 | +0.005 |
+
+Concentration adds substantially in the ternary arm and nothing in the float
+twin, and its sign is **opposite** between them (ternary −0.33, float +0.72):
+more concentrated flips go with *less* forgetting in the ternary model.
+
+**Treat this as a lead, not a result.** n=18 per arm, r=−0.33 is not significant
+on its own, and adding any predictor raises R². What makes it worth pursuing is
+the arm asymmetry — the same term does nothing for the float twin — and that it
+is a flip-specific quantity L2 cannot express. If H1 has a surviving form, it is
+about *where* flips land, not how many there are.
+
+### H2 is CONFIRMED, and it survives its confound
+
+Conflict-pair forgetting at matched budget, 3 seeds:
+
+| budget | ternary | float | difference |
+| ---: | ---: | ---: | ---: |
+| 25 | +2.34 (sd 0.15) | +4.02 (sd 0.42) | −1.68 |
+| 100 | **+9.14** (sd 0.74) | **+15.09** (sd 0.56) | **−5.94** |
+| 300 | **+12.36** (sd 0.61) | **+15.80** (sd 0.57) | **−3.44** |
+
+**The obvious objection is that ternary simply learned B less.** Checked, and it
+matters at one budget:
+
+| budget | ternary B-NLL | float B-NLL |
+| ---: | ---: | ---: |
+| 25 | 1.0842 | 0.3572 |
+| 100 | 0.0007 | 0.0001 |
+| 300 | 0.0000 | 0.0000 |
+
+At **25 steps the comparison is confounded** — ternary had not mastered B — and
+that row must not be used. At **100 and 300 steps both arms master B completely
+and identically**, and the ternary twin still retains ~6 and ~3.4 nats more of A.
+The differences are 8x and 6x their pooled sd at n=3.
+
+So: **at matched capability on both the old and the new task, the converted
+ternary model forgets substantially less than its data-matched float twin.** That
+is spec §1's H2 ("possibly less at low learning rates — latent-weight
+hysteresis"), in a specific and controlled form.
+
+Disjoint shows no such gap (differences −0.04, +0.12, +0.88), so the effect is
+specific to *direct overwriting*, not to interference in general.
+
+### Item 22 under task shift
+
+Scale-driven flips remain negligible: mean **0.00028%** of flips, max 0.00096%,
+across all 36 ternary runs. Phase 1d's finding holds under distribution shift,
+which is the caveat that entry explicitly left open.
+
+### Caveat on the B-mastery check
+
+`results.json` holds only seeds 1–2 (48 rows): a bug overwrote seed 0's rows when
+seeds 1,2 launched, and only `predictors.json` — which merges by key and copies
+`forgetting` across — preserved seed 0's outcome values. So the **forgetting and
+predictor analyses use all 72 runs**, but the B-mastery confound check above uses
+**seeds 1–2 only, n=2 per cell**. The pattern (identical mastery at 100/300
+steps) is unambiguous but rests on fewer runs than the headline numbers.
+
 ## Open items — the live list
 
 Closed:

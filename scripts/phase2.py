@@ -108,11 +108,17 @@ def main() -> None:
     # started `rows = []` and clobbered seed 0's results when seeds 1,2 launched;
     # only an incidental choice in phase2_flips.py (it copies `forgetting` into
     # each predictor row and merges by key) kept that data alive.
+    # Merge on the (arm, pair, seed) triple this invocation actually covers, not
+    # on seed alone: the chain now runs ONE triple per process (memory grows
+    # across model loads and OOM'd at ~20 runs in a single process), so a
+    # seed-level filter would delete other arms' rows for the same seed.
+    covered = {(arm, pair, sd) for arm in a.arms.split(",")
+               for pair in a.pairs.split(",") for sd in seeds}
     results_path = ROOT / "results.json"
     rows = []
     if results_path.is_file():
         rows = [r for r in json.loads(results_path.read_text())
-                if r["seed"] not in seeds]     # re-running a seed replaces it
+                if (r["arm"], r["pair"], r["seed"]) not in covered]
     t_start = time.perf_counter()
 
     for arm in a.arms.split(","):
@@ -123,7 +129,14 @@ def main() -> None:
             for seed in seeds:
                 # ---- stage A: train once, branch from it ----------------
                 a_dir = ROOT / f"{arm}-{pair}-s{seed}-A"
-                if not (a_dir / "COMPLETE").exists():
+                # COMPLETE alone is not enough: the pruner deletes checkpoints
+                # once their metrics exist, and a later chunk branching from a
+                # pruned A would load a directory that is gone (transformers
+                # then reads the missing path as a Hub repo id, which is how
+                # this presented). Same lesson as sequential.checkpoint_ok.
+                a_weights = a_dir / f"stage-0-{task_a}" / "model.safetensors"
+                if not ((a_dir / "COMPLETE").exists() and a_weights.is_file()):
+                    shutil.rmtree(a_dir, ignore_errors=True)
                     print(f"\n### A: {arm} {pair} seed {seed}", flush=True)
                     model, _ = load_arm(twin, ternary)
                     sequential.run(cfg_for(arm, f"{arm}-{pair}-s{seed}-A", twin,
