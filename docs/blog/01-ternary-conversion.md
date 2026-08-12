@@ -138,6 +138,10 @@ FineWeb-edu:
 | float twin | 2.5373 | 12.65 |
 | **ternary twin** | **5.1288** | **168.82** |
 
+![Held-out loss for the base model, the float twin and the ternary twin, on
+FineWeb-edu and WikiText-103. The float twin sits on top of base in both; the
+ternary twin is 2.59 and 3.63 nats above.](figures/01-conversion-gap.png)
+
 The float twin lands **+0.0116 nats** from base — given the same 65.5M tokens, it
 went essentially nowhere. That is the control doing its job: the 2.59-nat gap
 belongs to **ternarisation**, not to the extra training, the corpus, or the
@@ -159,6 +163,10 @@ itself.
 | Py150 | **9.4 SE** | 0.1 SE | **9.2 SE** |
 | NumGLUE-cm† | 1.5 SE | 0.2 SE | 1.1 SE |
 | FOMC | 0.1 SE | −0.8 SE | 0.1 SE |
+
+![Discrimination against shuffled answers, in standard errors, for four tasks and
+three models. Base and the float twin clear the 3-SE threshold on ScienceQA and
+Py150; the ternary twin clears nothing anywhere.](figures/02-capability-gate.png)
 
 **The ternary twin discriminates on nothing.** The base model discriminates
 strongly on two of four, so this is a statement about the model rather than about
@@ -274,6 +282,11 @@ float twin: **1.1e-5**. About 30,000×.
 | 2 | **0.364** | 1.14e-5 |
 | 8 | 0.344 | 1.14e-5 |
 | 32 | 0.357 | 1.34e-5 |
+
+![Median absolute change in log-probability against batch-1 scoring, by batch
+size, on a log scale. The ternary twin sits at ~0.35 nats across every batch size;
+the float twin at ~1.1e-5. About 30,000x apart, and flat from batch 2
+onward.](figures/03-batch-drift.png)
 
 Three things we checked, because the obvious explanations are wrong:
 
