@@ -61,7 +61,8 @@ def fit(logp: dict[tuple[str, str], float], v1: dict[str, str],
 
 def paired_contrast(logp_a: dict[tuple[str, str], float],
                     logp_p: dict[tuple[str, str], float],
-                    v1: dict[str, str], v2: dict[str, str]) -> dict[str, float]:
+                    v1: dict[str, str], v2: dict[str, str],
+                    vp: dict[str, str] | None = None) -> dict[str, float]:
     """Per-key contrast: v1's letter-demeaned residual in A→B minus in placebo→B.
 
     Returned per key rather than pooled so the caller can take a key-level SE.
@@ -72,17 +73,27 @@ def paired_contrast(logp_a: dict[tuple[str, str], float],
     measured against, so a true gamma comes back as gamma*(1 - 1/n) — with 7
     non-v2 letters that is a 14% underestimate, caught by the planted-effect test
     and large enough to matter against a 3-SE threshold.
+
+    **Pass `vp` to exclude the placebo letter from the key mean.** In the
+    placebo condition v' WAS taught and carries its own trace, so leaving it in
+    the mean leaks gamma_vp/6 into every contrast — measured at 13-15% of the
+    headline on real data, in the direction that inflates it. The first
+    planted-effect test could not catch this because it planted gamma_vp = 0 in
+    *both* conditions, which is the one case where the leak vanishes.
     """
     def residual(logp: dict[tuple[str, str], float]) -> dict[str, float]:
+        def skip(k: str, l: str) -> bool:
+            return l == v2.get(k) or (vp is not None and l == vp.get(k))
+
         by_letter: dict[str, list[float]] = {}
         for (k, l), val in logp.items():
-            if l != v2.get(k):
+            if not skip(k, l):
                 by_letter.setdefault(l, []).append(val)
         letter_mean = {l: float(np.mean(v)) for l, v in by_letter.items()}
         out = {}
         for k in {k for k, _ in logp}:
             cells = [(l, val) for (kk, l), val in logp.items()
-                     if kk == k and l != v2.get(k)]
+                     if kk == k and not skip(k, l)]
             if not cells or k not in v1:
                 continue
             adj = {l: val - letter_mean[l] for l, val in cells}

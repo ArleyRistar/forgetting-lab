@@ -54,13 +54,34 @@ def prefixes(tok, keys):
     return [prompts.render("flab", TASK_A, k, synthetic.VALUES[0], tok)[0] for k in keys]
 
 
-def score(model, tok, texts, ids, batch_size=8):
+def score(model, tok, texts, ids, batch_size=1):
     device = next(model.parameters()).device
     lp = probes._next_token_logprobs(model, tok, texts, device, batch_size, fp32=True)
     cols = torch.tensor([ids[v] for v in synthetic.VALUES], device=lp.device)
     sub = lp[:, cols]
     return [{v: float(sub[r, j]) for j, v in enumerate(synthetic.VALUES)}
             for r in range(sub.shape[0])]
+
+
+def rank_stats(probs, keys, v1, v2) -> dict:
+    """Scale-free: v1's rank among the 7 non-v2 letters, and its top-1 share.
+
+    A rank is invariant to ANY per-key monotone transform, so a between-arm
+    difference in logit range — which the ternary and float twins demonstrably
+    have (never-taught letters sit ~2.5 nats deeper in float) — cannot move it.
+    That is what makes it, and not gamma in log units, the statistic a cross-arm
+    magnitude claim has to rest on.
+    """
+    ranks, top = [], 0
+    for p, k in zip(probs, keys):
+        non_b = sorted(((p[v], v) for v in synthetic.VALUES if v != v2[k]),
+                       reverse=True)
+        r = 1 + [v for _, v in non_b].index(v1[k])
+        ranks.append(r)
+        top += (r == 1)
+    n = len(ranks)
+    return {"mean_rank": sum(ranks) / n, "top1_share": top / n,
+            "chance_top1": 1 / 7, "n": n}
 
 
 def batch_invariance(model, tok, texts, ids) -> float:
@@ -123,13 +144,17 @@ def main() -> None:
                                  f"for {arm}-s{seed}-{cond}")
             probs = score(model, tok, texts, ids)
             logp = {(k, l): p[l] for k, p in zip(keys, probs) for l in synthetic.VALUES}
-            fits[cond] = {"logp": logp,
+            fits[cond] = {"logp": logp, "rank": rank_stats(probs, keys, v1, v2),
                           "p_v2": sum(math.exp(logp[(k, v2[k])]) for k in keys) / len(keys),
                           "fe": fe.fit(logp, v1, vp, v2)}
             del model
             torch.cuda.empty_cache()
 
-        pk = fe.paired_contrast(fits["AB"]["logp"], fits["PB"]["logp"], v1, v2)
+        # vp excluded from the key mean: v' is TAUGHT in the placebo condition,
+        # so leaving it in leaks gamma_vp/6 into the contrast (13-15% inflation,
+        # measured).
+        pk = fe.paired_contrast(fits["AB"]["logp"], fits["PB"]["logp"], v1, v2,
+                                vp=vp)
         rec.update({
             "contrast_mean": sum(pk.values()) / len(pk), "n_keys_paired": len(pk),
             "gamma_v1_AB": fits["AB"]["fe"].gamma_v1,
@@ -137,6 +162,12 @@ def main() -> None:
             "gamma_vp_AB": fits["AB"]["fe"].gamma_vp,
             "gamma_vp_PB": fits["PB"]["fe"].gamma_vp,
             "p_v2_AB": fits["AB"]["p_v2"], "p_v2_PB": fits["PB"]["p_v2"],
+            # scale-free arm comparison
+            "rank_AB": fits["AB"]["rank"], "rank_PB": fits["PB"]["rank"],
+            "top1_contrast": (fits["AB"]["rank"]["top1_share"]
+                              - fits["PB"]["rank"]["top1_share"]),
+            # cross-instrument gate, wired rather than only promised
+            "nll_v2_scored_AB": -math.log(max(1e-30, fits["AB"]["p_v2"])),
         })
         out["cells"].append(rec)
         per_arm.setdefault(arm, []).append(rec["contrast_mean"])
@@ -146,6 +177,13 @@ def main() -> None:
         (Path(a.out)).write_text(json.dumps(out, indent=2, default=str))
 
     out["seed_level"] = {arm: fe.seed_level(v) for arm, v in per_arm.items()}
+    # scale-free arm comparison, the statistic a "2x" claim must rest on
+    top1 = {}
+    for arm in ("ternary", "float"):
+        vals = [c["top1_contrast"] for c in out["cells"] if c["arm"] == arm]
+        if vals:
+            top1[arm] = fe.seed_level(vals)
+    out["seed_level_top1"] = top1
     # placebo gate: gamma_v1 in the condition where v1 was never taught
     worst = max((abs(c["gamma_v1_PB"]) for c in out["cells"]), default=0.0)
     out["gates"]["placebo_equivalence"] = {"worst_abs_gamma_v1_PB": worst,

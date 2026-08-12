@@ -103,3 +103,19 @@ def test_paired_contrast_is_bias_corrected():
     logp_p, _, _, _ = _synthetic(gamma_v1=0.0, gamma_vp=0.0, seed=17)
     m = float(np.mean(list(fe.paired_contrast(logp_a, logp_p, v1, v2).values())))
     assert m == pytest.approx(1.0, abs=0.05), f"got {m}, uncorrected would be ~0.857"
+
+
+def test_placebo_letter_leaks_into_the_contrast_unless_excluded():
+    """The real placebo condition TEACHES v', so v' carries its own trace there.
+    Leaving it in the key mean leaks gamma_vp/6 into the contrast — 13-15% of the
+    headline on real data. The earlier planted test missed this by planting
+    gamma_vp = 0 in both conditions, the one case where the leak vanishes."""
+    logp_a, v1, vp, v2 = _synthetic(gamma_v1=0.6, gamma_vp=0.0, seed=23)
+    logp_p, _, _, _ = _synthetic(gamma_v1=0.0, gamma_vp=0.9, seed=23)  # v' taught
+
+    leaky = float(np.mean(list(fe.paired_contrast(logp_a, logp_p, v1, v2).values())))
+    clean = float(np.mean(list(
+        fe.paired_contrast(logp_a, logp_p, v1, v2, vp=vp).values())))
+    assert clean == pytest.approx(0.6, abs=0.06), f"clean estimate off: {clean}"
+    assert leaky > clean + 0.08, (
+        f"leak should inflate: leaky={leaky:.3f} clean={clean:.3f}")

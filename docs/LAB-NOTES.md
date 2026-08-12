@@ -3039,7 +3039,77 @@ Recorded rather than fixed: the next card decides whether this is worth another
 ~2 GPU-h, and that is Arley's call. The honest default is that it is a *lead*,
 and phase 2's reportable results remain the instrument findings and H1.
 
-## 2026-08-11 — PHASE 2B: a trace survives in BOTH arms, and it is LARGER in the float twin
+## 2026-08-12 — PHASE 2B CORRECTED: the trace holds for FLOAT only; the ternary effect does not survive a scale-free test
+
+The entry below is superseded. Review found two defects and one confound; all
+three are verified, and the conclusion changes.
+
+### 1. The estimator leaked the placebo letter's own trace (verified exactly)
+
+`paired_contrast` took the key mean over all 7 non-v2 letters — including v′,
+which **is taught** in the placebo condition and carries its own trace. Measured
+on all six cells, the recorded contrast equals
+`(γ_v1_AB − γ_v1_PB) + (γ_vp_PB − γ_vp_AB)/6` to within 0.007. That inflated
+every headline by 13–18%. The planted-effect test could not catch it because it
+planted γ_vp = 0 in *both* conditions — the one case where the leak vanishes.
+Fixed; a test with γ_vp ≠ 0 in the placebo condition now covers it.
+
+### 2. The batch drift was ternary-only, so my explanation was wrong
+
+Measured drift, batch 1 vs 8: **ternary 1.22–1.93 log units, float 4–7 × 10⁻⁵**.
+Five orders of magnitude. My "fp32 sensitivity of tiny tail probabilities"
+attribution cannot be right — float's tails are *smaller* and it shows no drift.
+
+The cause is the `round()` in `activation_quant` (`bitlinear.py:46-49`): **the
+ternary forward pass is discontinuous**, so perturbations at the 1e-6 level from
+batch composition cross rounding thresholds and cascade through 224 quantised
+layers. This is a real and, as far as our sweeps found, unreported property:
+**ternary forward passes are not numerically stable to batch composition.**
+Anything measured on a ternary model at batch > 1 inherits it.
+
+Rescored at batch 1 (deterministic, no padding). The ternary seed SE fell from
+0.024 to **0.0085**, confirming the earlier figure carried drift noise.
+
+### 3. Corrected numbers, and the scale-free test that overturns the headline
+
+| arm | γ contrast (log units) | **top-1 rank contrast (scale-free)** |
+| --- | --- | --- |
+| ternary | +0.326 ± 0.009, t=38.3 | **+0.045 ± 0.025, CI [−0.061, +0.151], t=1.8** |
+| float | +0.746 ± 0.088, t=8.5 | **+0.122 ± 0.006, CI [+0.096, +0.148], t=20.3** |
+| arm difference | −0.420 | −0.077 ± 0.025 = **3.02 SE** |
+
+**Why the rank statistic is the one that counts.** γ is in log-probability units,
+and the arms' log scales differ in exactly the region γ lives in: a *never-taught*
+letter after B sits at NLL ~10.5 in ternary and ~12.9 in float — float pushes
+letters it has no reason to suppress ~2.5 nats deeper. A rank is invariant to any
+per-key monotone transform, so a calibration difference cannot move it. Comparing
+γ across arms is the error class that got H2 retracted.
+
+**The result:**
+
+- **Float twin: a sub-behavioural trace is established**, on both measures
+  (t=20 on the scale-free one), against its own matched placebo.
+- **Ternary twin: not established.** γ says t=38, the rank statistic says t=1.8
+  with a confidence interval spanning zero. So the ternary γ is largely a
+  log-scale shift rather than v1 actually rising in the ordering.
+- The arm difference clears the pre-registered 3 SE **barely** (3.02) and favours
+  **float**, consistent with the γ direction but far weaker.
+
+Also unreported in the entry below and now checked: the card's pre-registered
+**replication on the second taught letter** gives an arm difference of −0.266 at
+**1.9 SE — failing the 3-SE gate**. And everything in the float arm is ~2×
+ternary — v1 contrast, v′ contrast, and placebo noise sd (0.183 vs 0.033) — which
+is the signature of a scale multiplier. That is why no cross-arm *magnitude* claim
+is safe even now; only the rank-based direction is.
+
+**So the honest summary of phase 2b:** a trace of an overwritten association
+survives below the behavioural floor in the **float** twin. The ternary twin shows
+a log-scale effect that does not survive a rank-based test. Nothing here supports
+"ternary retains more", and the direction of what is measurable points the other
+way — consistent with phase 2's behavioural disjoint result (float 0.60 vs
+ternary 0.40).
+
+## 2026-08-11 — PHASE 2B (SUPERSEDED — see the correction above)
 
 24 runs (2 arms × 3 seeds × {A, placebo A′, B-from-A, B-from-A′}), 200 keys,
 generator seed varying with the run seed. Scored through
