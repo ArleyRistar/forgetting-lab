@@ -261,20 +261,78 @@ Three things we checked, because the obvious explanations are wrong:
   quantisation and drift drops to float levels (1.5e-5). Disable *weight*
   quantisation instead and 0.062 remains.
 
-The mechanism follows: cuBLAS returns slightly different results for different
-batch shapes — ~1e-7, which is all the float model ever shows. Then
-`round()` in activation quantisation snaps to int8 levels, so a perturbation near
-a rounding boundary flips a level by 1/127 ≈ 0.008 — an amplification of roughly
-10⁵ — and 224 quantised layers compound it.
+### It is not the batch-coupling bug you are thinking of
 
-**It does not change what the model says.** Zero argmax flips out of 64, in every
-condition. Generation and greedy accuracy are unaffected.
+There is a well-known way for quantised inference to become batch-dependent: a
+quantisation scale computed *across* the batch, e.g. `scale = x.abs().max()` over
+the whole tensor, so one row's outlier changes another row's quantisation. That
+is a filed bug ([bitts#2](https://github.com/jaweed3/bitts/issues/2)) and now a
+security paper — [*Quantamination: Dynamic Quantization Leaks Your Data Across
+the Batch*](https://arxiv.org/abs/2604.26505) shows several mainstream frameworks
+ship configurations that leak across the batch boundary.
 
-So the practical consequence is narrow but real: **anything likelihood-based on a
-low-bit model is batch-dependent at the ~0.3-nat level.** Perplexity comparisons,
-NLL probes, KL measurements. A few tenths of a nat between two ternary
-checkpoints may be your batch size rather than your checkpoints. Score at batch 1,
-or report the batch size as part of the measurement.
+**That is not what this is.** Our activation scale is per-token:
+
+```python
+scale = 127.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
+```
+
+`dim=-1` means each row's scale sees only that row. We checked directly: a row
+quantised alone is **bit-identical** to the same row in a batch alongside rows
+100× larger. The drift survives a scale that cannot see other rows — which is
+what makes it a different phenomenon, and a harder one to design away.
+
+### The mechanism
+
+cuBLAS returns slightly different results for different batch shapes — ~1e-7,
+which is all the float twin ever shows. Then `round()` in activation quantisation
+snaps to int8 levels, so a perturbation near a rounding boundary flips a level by
+1/127 ≈ 0.008 — an amplification of roughly 10⁵ — and 224 quantised layers
+compound it.
+
+The amplification principle is not new: [Defensive
+Quantization](https://arxiv.org/abs/1904.08444) (Lin, Gan & Han, ICLR 2019) named
+the "error amplification effect", where quantisation enlarges perturbations layer
+by layer and worse the fewer the bits. They applied it to adversarial noise; we
+are applying it to the float noise that batch shape already produces.
+
+### It does not change what the model says
+
+Zero argmax flips out of 64, in every condition. Generation and greedy accuracy
+are unaffected.
+
+So the consequence is narrow but real: **anything likelihood-based on a low-bit
+model is batch-dependent at the ~0.3-nat level.** Perplexity comparisons, NLL
+probes, KL measurements. A few tenths of a nat between two ternary checkpoints may
+be your batch size rather than your checkpoints. Score at batch 1, or report the
+batch size as part of the measurement.
+
+### What is and is not new here
+
+Batch-dependent inference in *float* LLMs is well documented — [Thinking
+Machines](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/)
+and [arXiv 2506.09501](https://arxiv.org/abs/2506.09501), the latter reporting up
+to 9% accuracy swings from batch size, GPU count and GPU version. Neither touches
+quantisation. Batch-invariance bugs in quantised *kernels* are also known and
+fixed at the engineering level — see vLLM
+[#36488](https://github.com/vllm-project/vllm/pull/36488), where an mxfp4 MoE
+Triton kernel picked its block size from tokens-per-expert and 20 of 30 prompts
+changed — but that is accumulation order, not rounding amplification, and nobody
+there quantifies quantised-versus-float drift.
+
+What we believe is new is the measurement and its attribution: the ~30,000×
+ternary-versus-float ratio, activation quantisation isolated as the cause *under
+a batch-independent per-token scale*, the step change at batch 2, the padding
+rule-out, and the consequence for likelihood-based low-bit evaluation.
+
+**One scope limit that matters.** This is *simulated* quantisation — fake-quant
+executed in floating-point kernels, which is what QAT and most research code do.
+A true integer pipeline may behave differently: [arXiv
+2607.23227](https://arxiv.org/abs/2607.23227) argues INT8 QDQ on ARM is
+dispatch-invariant, with every intermediate accumulator byte-identical, precisely
+because discrete inputs remove the float noise our mechanism needs. So read this
+as a claim about simulated-quantisation research pipelines, not about deployed
+integer inference.
 
 ---
 
@@ -367,5 +425,9 @@ Ti Laptop, over about a week.
 - [*When Less is More: 8-bit Quantization Improves Continual
   Learning*](https://arxiv.org/abs/2512.18934) — points the opposite way to our
   intuition, and we could not confirm or refute it at this scale.
-- [Nielsen, Schneider-Kamp & Galke](https://aclanthology.org/2025.findings-acl.694/)
-  — the closest published recipe to ours, with the full hyperparameters.
+- Nielsen, Schneider-Kamp & Galke, [*Continual Quantization-Aware Pre-Training:
+  When to transition from 16-bit to 1.58-bit pre-training for BitNet language
+  models?*](https://arxiv.org/abs/2502.11895) — the closest published recipe to
+  ours, with full hyperparameters. (Venue: **Arley, confirm before publishing** —
+  the arXiv record carries no journal-ref, so the ACL 2025 Findings attribution is
+  unverified.)
