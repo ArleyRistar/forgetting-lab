@@ -9,8 +9,11 @@ is written that way here.*
 ## TL;DR
 
 We converted SmolLM2-360M to ternary (1.58-bit) weights with continued
-quantisation-aware training, and — this is the part nobody else seems to do —
-trained a **float twin on exactly the same tokens** as a control. Then we spent
+quantisation-aware training, and trained a **float twin on exactly the same
+tokens** as a control. Matched-precision suites exist
+([Spectra](https://arxiv.org/abs/2407.12327) trains FloatLM and TriLM on the same
+data); what we could not find is a *conversion* study that runs the float control
+at a matched token budget. Then we spent
 several days trying to measure whether ternary models forget differently, and
 mostly found out that we were measuring the wrong things.
 
@@ -44,10 +47,11 @@ because the retraction is more useful than the claim would have been.
 Go and read the discussion tabs on any ternary model release and you will find
 the same argument. From `microsoft/bitnet-b1.58-2B-4T` #15:
 
-> *"I don't think there is any benefit in training efficiency since it still uses
-> full precision in training stage"* — followed by *"otherwise why even bother
-> training a new model... they could have just applied post-training ternary
-> quantisation."*
+> *"I don't think there is any benefit in training efficiency since it still use
+> full precision in training stage"* — to which another commenter replies:
+> *"otherwise why even bother training a new model... [the authors] could have
+> just applied post-training ternary quantisation [to an existing model like
+> Phi-4]."*
 
 The question underneath it is: **how much of what you lose is ternarisation, and
 how much is just the extra training you did?** You cannot answer that from a
@@ -62,9 +66,17 @@ conversion run alone. So we ran two:
 | optimiser | 8-bit Adam, β₂=0.95, wd 0 | identical |
 | difference | BitLinear at λ=1 | nothing |
 
-Everything matched except the thing under test. Where the two arms *do* differ —
-micro-batch, because the float arm OOMs at the ternary arm's batch size — we say
-so below.
+Everything matched except the thing under test. Where the two arms differ, they
+differ in ways the experiment does not depend on: **micro-batch** (2×8 vs 4×4 —
+the float arm OOMs at the ternary arm's, for a reason we get to below), allocator
+configuration, and therefore step time. Tokens, token order, tokens-per-step,
+total steps, LR, schedule, optimiser and seed all match.
+
+**One deliberate choice worth flagging:** both arms use the same learning rate,
+following [Nielsen et al.](https://arxiv.org/abs/2502.11895), so the pair differs
+in one variable rather than two. Microsoft's ternary recipes use roughly 6× the
+float LR at the same model size, so 1e-4 probably leaves our ternary arm below its
+own optimum. That is one reason we make no absolute-quality claim about it.
 
 One caveat before any number: **65.5M tokens is roughly 150× less than the
 reference recipe** ([HF's Llama3→1.58bit
@@ -93,12 +105,15 @@ does to an Adam step on this checkpoint:
 | bf16 | 2e-5 | **96.3%** |
 | fp32 | 1e-4 | — (works) |
 
-The model was freezing 24 of every 25 latent weights per step. And it explains
+The model was freezing most of its latent weights every step — up to 24 in 25 at
+lr 2e-5. And it explains
 the thing that had confused us most: **lowering the learning rate made it worse**,
 because smaller updates round away more often.
 
-Changing only the dtype — same LR, same everything — fixed conversion. The 135M
-shakedown went from "collapsed to chance and stayed there" to a working model.
+Changing the dtype — with the learning rate held at 1e-4 — fixed conversion. The
+135M shakedown went from "collapsed to chance and stayed there" to a working
+model. (That run also reverted an earlier experiment of ours with the layer norm,
+so dtype is the change that mattered, not the only change we made.)
 
 Every reference implementation trains an fp32 master (nanotron defaults
 `accumulate_grad_in_fp32: true`), so this is not a new technique — but nothing we
@@ -142,7 +157,7 @@ itself.
 | --- | ---: | ---: | ---: |
 | ScienceQA | **6.1 SE** | 0.8 SE | **5.5 SE** |
 | Py150 | **9.4 SE** | 0.1 SE | **9.2 SE** |
-| NumGLUE-cm | 1.5 SE | 0.2 SE | 1.1 SE |
+| NumGLUE-cm† | 1.5 SE | 0.2 SE | 1.1 SE |
 | FOMC | 0.1 SE | −0.8 SE | 0.1 SE |
 
 **The ternary twin discriminates on nothing.** The base model discriminates
@@ -157,6 +172,9 @@ twin, **8.29** for the ternary twin, and the discrimination signal collapses fro
 So: a loss curve that converges, a perplexity that is merely bad, and **zero
 measurable capability**. If you are converting a small model on a small budget,
 perplexity will not tell you this has happened.
+
+† NumGLUE-cm has only 41 scorable held-out items, so it is **underpowered, not
+evidence of absence** — base's effect there would reach ~3.3 SE at n=200.
 
 (FOMC fails for *every* arm including base — it is a bad probe at this scale, not
 evidence about any model. We report it because dropping it silently would be
@@ -210,6 +228,12 @@ We built the instrument, partitioned every flip into four disjoint causes
 (weight-driven, threshold-driven, either, both), and measured it across
 conversion, a no-distribution-shift null arm, and 72 sequential fine-tuning runs.
 
+**A scoping note that matters for reading the numbers:** 224 BitLinear layers
+cover **86.9%** of the parameters. The tied embedding/`lm_head` — 13.1%, and it
+*is* the output head — stays float, as in every reference recipe. Both the flip
+and the L2 statistics below cover the ternarised core only, so do not compare them
+against a whole-model parameter distance.
+
 **Two results, both negative, both clean.**
 
 The threshold-motion confound is negligible. Scale-driven flips are **0% per
@@ -222,7 +246,7 @@ And the metric carries no information beyond L2:
 | regime | flips / L2 |
 | --- | ---: |
 | conversion, 1000-step intervals | 0.000186–0.000208 |
-| null arm, 25-step intervals | 0.000205–0.000249 |
+| null arm, 25-step intervals | 0.000208–0.000249 |
 | task shift, 72 runs | 0.000198–0.000222 |
 
 Across a 20× range of L2, both arms, every cadence, **the ratio does not move**.
@@ -231,7 +255,8 @@ anything L2 does not. Directly: in the ternary arm, flips and L2 correlate with
 forgetting at +0.5952 and +0.6006 — indistinguishable, flips marginally worse.
 
 If you were hoping weight-state flips are a cheap, scale-free forgetting
-predictor: on this evidence, at this scale, they are L2 in different units.
+predictor: on this evidence — a mid-conversion twin at lr 1e-4, on synthetic
+recall tasks — they are L2 in different units.
 
 ---
 
@@ -277,15 +302,16 @@ ship configurations that leak across the batch boundary.
 scale = 127.0 / x.abs().max(dim=-1, keepdim=True).values.clamp_(min=1e-5)
 ```
 
-`dim=-1` means each row's scale sees only that row. We checked directly: a row
-quantised alone is **bit-identical** to the same row in a batch alongside rows
-100× larger. The drift survives a scale that cannot see other rows — which is
-what makes it a different phenomenon, and a harder one to design away.
+`dim=-1` means each row's scale sees only that row. Measured, not just argued: a
+row quantised alone is **bit-identical** (max difference exactly 0.0) to the same
+row batched alongside rows 120× larger. The drift survives a scale with no
+cross-batch path — which is what makes it a different phenomenon, and a harder
+one to design away.
 
 ### The mechanism
 
-cuBLAS returns slightly different results for different batch shapes — ~1e-7,
-which is all the float twin ever shows. Then `round()` in activation quantisation
+cuBLAS returns slightly different results for different batch shapes — ~1e-7 per
+matmul, accumulating to the ~1e-5 the float twin shows end to end. Then `round()` in activation quantisation
 snaps to int8 levels, so a perturbation near a rounding boundary flips a level by
 1/127 ≈ 0.008 — an amplification of roughly 10⁵ — and 224 quantised layers
 compound it.
@@ -298,8 +324,12 @@ are applying it to the float noise that batch shape already produces.
 
 ### It does not change what the model says
 
-Zero argmax flips out of 64, in every condition. Generation and greedy accuracy
-are unaffected.
+**Zero argmax flips out of 64 for both shipped models** — every batch size, and
+with padding removed. Generation and greedy accuracy are unaffected.
+
+(The weight-quant-off *diagnostic* ablation did flip 18 of 64. That is not a model
+anyone ships — it is a probe we ran to isolate the cause — but it is in the output
+JSON, and we would rather say so than have you find it.)
 
 So the consequence is narrow but real: **anything likelihood-based on a low-bit
 model is batch-dependent at the ~0.3-nat level.** Perplexity comparisons, NLL
@@ -343,13 +373,16 @@ worth more than the claim was.
 
 We had trained both twins on task A, then on a conflicting task B that overwrites
 A's answers, and measured how much A's NLL rose. The ternary twin's rose by ~6
-nats less. Both arms had mastered B identically. It looked clean.
+nats less. Both arms *appeared* to have mastered B identically. It looked clean.
 
 **Then someone checked the accuracy column.** Task-A token accuracy was **0.00 in
-both arms, every seed**. Both models had forgotten A *completely*. The 6-nat gap
-lived entirely in the log-probability of a token neither model would ever emit —
-at 7–14 nats above chance, comparing p≈1e-4 against p≈1e-7. That is softmax tail
-geometry, not memory.
+both arms, every seed**. Both models had forgotten A *completely*.
+
+The "identical B mastery" was wrong too: the NLLs differed 7× (0.000532 vs
+0.000075), and because A's NLL is bounded below by −log(1−p(B)), that gap alone
+mechanically forces about 2 of the 6 nats. The rest lived in the log-probability
+of a token neither model would ever emit — at 7–14 nats above chance, comparing
+p≈1e-4 against p≈1e-7. Softmax tail geometry, not memory.
 
 And where retention *was* measurable — a task pair that does not overwrite — the
 direction reversed: the float twin retained 0.60 accuracy against the ternary
@@ -358,12 +391,13 @@ twin's 0.40.
 The accuracy was in every one of the 72 output files the entire time. We analysed
 the NLL and never opened it.
 
-This is the same shape as a bug we had already documented weeks earlier, where a
+This is the same shape as a bug we had documented two days earlier, where a
 50-point "accuracy collapse" turned out to be a turn-terminator token. Both times
 the honest number was sitting in the output. So we added a guard that refuses to
 report a capability claim when accuracy is at floor in every arm, or when NLL sits
-more than 2 nats above a task's chance level. It is 40 lines and it would have
-caught both.
+more than 2 nats above a task's chance level. It is ~100 lines, and it would have
+caught this retraction. The turn-terminator bug needed a different check — content
+accuracy, excluding the answer's final token — which also now exists.
 
 **If you take one methodological thing from this post:** a likelihood difference
 between two models is not a capability difference, and the further you are from
@@ -389,7 +423,7 @@ probabilistic one.
   point on the transition curve ([Nielsen et
   al.](https://aclanthology.org/2025.findings-acl.694/)).
 - **The KL replication** from our earlier calibration work sits 5.4× above the
-  paper's, unexplained. The accuracy replicates; the KL does not.
+  figure in [arXiv 2606.27634](https://arxiv.org/abs/2606.27634), unexplained. The accuracy replicates; the KL does not.
 
 ---
 
@@ -407,7 +441,7 @@ uv run python -m flab.convert --model HuggingFaceTB/SmolLM2-360M --mode float \
   --batch-size 2 --grad-accum 8 --expect-tokens-per-step 16384
 ```
 
-Total compute for everything described here: roughly 30 GPU-hours on one RTX 3070
+Total compute for everything described here: roughly 35 GPU-hours on one RTX 3070
 Ti Laptop, over about a week.
 
 ## Related work worth reading
@@ -428,6 +462,4 @@ Ti Laptop, over about a week.
 - Nielsen, Schneider-Kamp & Galke, [*Continual Quantization-Aware Pre-Training:
   When to transition from 16-bit to 1.58-bit pre-training for BitNet language
   models?*](https://arxiv.org/abs/2502.11895) — the closest published recipe to
-  ours, with full hyperparameters. (Venue: **Arley, confirm before publishing** —
-  the arXiv record carries no journal-ref, so the ACL 2025 Findings attribution is
-  unverified.)
+  ours, with full hyperparameters. Findings of ACL 2025.

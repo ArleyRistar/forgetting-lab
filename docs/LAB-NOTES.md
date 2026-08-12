@@ -3228,6 +3228,17 @@ Equal-length inputs, so no padding exists at all: ternary max 2.593, median
 **0.342** — unchanged. So this is batch *composition*, not ragged batches, and it
 cannot be fixed by bucketing or by an attention mask.
 
+### The scale is row-local, so this is not the known batch-coupling bug
+
+Recorded because it is the load-bearing sentence of the novelty claim, and the
+project rule is that measured beats reasoned. The usual way quantised inference
+goes batch-dependent is a scale taken *across* the batch (a filed bug elsewhere,
+and the Quantamination security paper). Ours is `dim=-1`. Measured: a row
+quantised alone is **bit-identical** to the same row batched alongside rows
+**120x larger** — max absolute difference exactly 0.0
+(`scale_is_row_local` in `scripts/ternary_batch_stability.py`). The drift survives
+a scale with no cross-batch path.
+
 ### It is activation quantisation
 
 Ternary twin, one quantiser disabled at a time:
@@ -3248,9 +3259,18 @@ the 1e-7 level — which is all the float model ever shows. `activation_quant`
 rounding boundary flips a level by 1/127 ≈ 0.008 — an amplification of ~10^5 —
 and 224 quantised layers compound it into ~0.34 nats.
 
-### It does not change what the model says
+### It does not change what the model says — with one exception found later
 
-**0 argmax flips out of 64, in every condition tested.** So this is a
+**0 argmax flips out of 64 for both shipped models**, at every batch size and
+with padding removed.
+
+**Correction, 2026-08-12:** the entry originally said "in every condition
+tested". It is not. The **weight-quant-off ablation flipped 18 of 64** — recorded
+in `outputs/ternary-batch-stability.json` all along, but the console output never
+printed flips for the ablation conditions, so the claim went into these notes and
+into a blog draft unseen. Caught by review. That configuration is a diagnostic
+probe, not a model anyone ships, so the practical conclusion stands; the wording
+did not. So this is a
 log-probability phenomenon, not a correctness one: generation and greedy accuracy
 are unaffected, while anything logprob-based — perplexity, NLL probes, KL
 measurements, our own FE estimator — inherits it.

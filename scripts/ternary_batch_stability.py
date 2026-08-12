@@ -63,6 +63,26 @@ def drift(ref, cur):
             "mean": float(d.mean()), "argmax_flips": flips, "n": ref.shape[0]}
 
 
+def scale_is_row_local(n_rows: int = 8, dim: int = 64) -> dict:
+    """Is the activation scale computable from one row alone?
+
+    The standard reason quantised inference goes batch-dependent is a scale taken
+    ACROSS the batch (`x.abs().max()` over the whole tensor), which is a filed bug
+    elsewhere and a security paper. Ours is `dim=-1`. Checked rather than argued,
+    because "our scale cannot see other rows" is the load-bearing sentence of the
+    novelty claim and the project rule is that measured beats reasoned.
+    """
+    torch.manual_seed(0)
+    row = torch.randn(1, dim)
+    alone = bl.activation_quant(row.clone())
+    # ...same row, batched with rows two orders of magnitude larger
+    crowd = torch.cat([row, torch.randn(n_rows - 1, dim) * 100])
+    batched = bl.activation_quant(crowd)[0:1]
+    return {"bit_identical": bool(torch.equal(alone, batched)),
+            "max_abs_diff": float((alone - batched).abs().max()),
+            "companion_scale_ratio": float(crowd[1:].abs().max() / row.abs().max())}
+
+
 def main() -> None:
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(BASE)
@@ -74,6 +94,8 @@ def main() -> None:
     lens = sorted({len(tok(t, add_special_tokens=False)["input_ids"]) for t in texts})
     print(f"{len(texts)} prompts, token lengths {lens[0]}-{lens[-1]}\n", flush=True)
     res = {"prompt_lengths": [lens[0], lens[-1]], "n_prompts": len(texts)}
+    res["scale_is_row_local"] = scale_is_row_local()
+    print(f"activation scale is row-local: {res['scale_is_row_local']}\n", flush=True)
 
     for label, path, ternary in (("ternary", TERNARY, True), ("float", FLOAT, False)):
         model, n = loading.load_converted(path, dtype=torch.float32,
