@@ -24,8 +24,13 @@ number, the number belongs in the notes with how it was measured.
    ~40 thermal-derated GPU-h. This gate is about spending compute on
    result-bearing runs; engineering measurements (thermal, memory, throughput)
    have in practice been treated as ordinary work.
-2. **Arley writes all conclusions and blog posts.** Claude produces runs, plots,
-   tables and analysis drafts. The writing is where his learning happens.
+2. **Conclusions are Arley's; the blog-post drafting is Claude's** (changed
+   2026-08-12 — the original rule reserved all writing for Arley because the
+   writing was where his learning happened). Claude now drafts the posts in full;
+   Arley edits, approves and decides what is claimed. Claude still never decides
+   *what the result is* — every claim must trace to a measured number in
+   LAB-NOTES, and anything the notes mark as retracted, superseded or
+   inconclusive must be written that way.
 3. **Distinguish measured from computed.** Tonight's VRAM table was computed,
    then measured, and the measurement changed two of six numbers. Label which
    is which in the notes; never present arithmetic as a result.

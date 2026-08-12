@@ -3275,227 +3275,60 @@ from 0.024 to 0.0085.
 
 ## Open items — the live list
 
-Closed:
+**Cleaned up 2026-08-12, after the experimental programme closed.** Phase 2 and
+2b resolved or mooted most of this list; what follows separates what is still
+live from what the programme answered, so a future session does not re-open
+settled questions.
 
-- ~~1. Before/after eval table~~ — done 2026-08-08. No benchmark metric moved
-  beyond ~1.1 SE; the loss probes did. See the eval section above.
-- ~~3. Re-derive the §4 VRAM envelope~~ — done 2026-08-07. Outcome inverted the
-  open item's assumption: the ternary ceiling is recipe-dependent, not
-  card-limited.
-- ~~4. Measure full-FT memory directly~~ — done 2026-08-08. Computed table
-  validated within ~10%.
-- ~~2. Clock-cap A/B~~ — done 2026-08-08. **Hypothesis refuted**: 1000 MHz is
-  8.5% slower overall and 5.6% slower in the temperature-matched soaked window.
-  The cap does not prevent thermal throttling. Keep 1200 MHz.
-- ~~6. Add `--log_samples` to `scripts/eval.sh`~~ — done 2026-08-08 in `89935a8`;
-  the entry below was stale.
+### Still live
 
-Open:
+- **5. Does the unmerged-adapter 1.89x penalty hit batched loglikelihood tasks?**
+  Engineering. Untested; matters only if LoRA evals return.
+- **8. Reconcile the two derate numbers** — §4 budgets 1.9x, the clock-cap A/B
+  measured 1.26x over 11 min at 87 C. Different workloads. Keep budgeting at 1.9x
+  (the conservative one) until reconciled.
+- **11. Resume does not notice a code change.** `content_hash` covers the config,
+  not the implementation, so editing a probe and re-running into an existing run
+  directory silently mixes results from two versions. `run.json` records
+  `git_commit`; the cheap fix is to warn on mismatch. **This nearly bit phase 2b**
+  — the generator changed and only a fresh output root prevented reuse.
+- **12. KL is 5.4x above the paper's** (3.375 vs 0.630 final, Llama) after
+  replication mode closed every other gap. Unsettled, so the phase-1b write-up
+  must not claim the KL replicates — only the accuracy does.
+- **17. Distillation from the float teacher.** Off the critical path since phase
+  1e showed the twin can learn. It remains the route to a twin that is *capable*
+  on real tasks, which is what any future H3 work would need.
 
-5. **Does the unmerged-adapter 1.89× penalty also hit batched loglikelihood
-   tasks?** Likely much smaller (compute-bound, not decode-bound). If it does,
-   add adapter-merging to the eval wrapper.
-8. **Reconcile the two derate numbers** — §4 budgets 1.9x, the clock-cap A/B
-   measured 1.26x over 11 min of full fine-tuning at 87 C. Different workloads;
-   until reconciled, keep budgeting at 1.9x (the conservative one).
-9. **Which forgetting normalisation?** Absolute NLL delta and percent-of-own-gain
-   disagreed about the recency gradient's strength in the shakedown (6.6x vs
-   1.2x). Decide before phase 2 reports an effect size, and report both.
-10. **Re-examine the 1a shakedown's magnitudes now the floor is ~0.** Phase 1a
-    reported +0.694 and +0.105 NLL forgetting with no artefact estimate. The null
-    control says the harness adds nothing, so those are real — but they were
-    one seed, and seed variance is now the binding constraint rather than
-    instrumentation.
-11. **Resume does not notice a code change.** `content_hash` covers the config,
-    not the implementation, so editing a probe and re-running into an existing
-    run directory silently skips completed stages and mixes results computed by
-    two different versions. Hit on 2026-08-09 fixing the KL direction; handled
-    by deleting the run dirs. `run.json` already records `git_commit` — the
-    cheap fix is for resume to warn (not refuse) when it differs.
-12. **KL is 5.4× above the paper's** after replication mode closed every other
-    gap (3.375 vs 0.630 final, Llama). Accuracy matches, so it is not training
-    intensity. Suspects: which rows land in the 20% reference carve, or a
-    checkpoint-definition mismatch. Do not claim the KL replicates until settled.
-- ~~13. Decide `completion_only` for phase 2.~~ — decided 2026-08-09 (delegated
-  by Arley): **mask the prompt**. Full-sequence loss lets prompt-format drift
-  contaminate the forgetting signal, the same artefact class as the turn
-  terminator. See the delegated-decisions entry above.
-- ~~14. Generative exact-match eval~~ — done 2026-08-09. Settled it: the swap was
-  a teacher-forcing artefact, gemma scores 0.301 generatively against their
-  0.320, and the calibration gate passes.
-15. **Qwen's accuracy is 0.10 below theirs** (0.488 vs 0.591) where gemma and
-    llama land within 0.02. Possibly the Qwen3.5 chat template's thinking mode,
-    which their config disables via `enable_thinking=False` and which our
-    renderer passes only when the template accepts the kwarg. Worth checking
-    before phase 2 reuses this rendering path.
-- ~~16. Is phase 1c affordable on this box?~~ — settled 2026-08-09. Shakedown v4
-  reached 5.767 at 135M once latents were fp32, and the 360M arm is running
-  inside the envelope. The blocker was the bf16 rounding bug, not the budget.
-17. **Add distillation from the float teacher to the conversion.** Both recipes
-    that succeed at our scale (BitDistill 2510.13998, Ternary Mamba 2606.18114)
-    use KD; our three failed shakedowns used plain LM loss. Ternary Mamba
-    reaches a usable model in 102M tokens, inside our budget.
-18. **Rename our metric.** "%flips" already means prediction flips
-    (2407.09141). Use "weight-state flips".
-19. **Add KL-to-base as a forgetting predictor in both arms.** RL's Razor
-    (2509.04259) shows L2 is a weak predictor, so flips-vs-L2 alone is a
-    strawman. Phase 1b already built the metric.
-20. **Verify the ternary twin's baseline capability before phase 2.** Conversion
-    at sub-1B is documented to fail outright; without this check, forgetting and
-    failure-to-convert are confounded. **Raised in priority 2026-08-09** — it is
-    also the gate for item 23, and it is verbatim the one question the community
-    asked of the only 2026 ternary continued-learning release. Run it straight
-    after `conversion_gap.py`, before any phase-2 card.
+### Answered by the programme
 
-The next four come from a 2026-08-09 review of the community sweep against the
-spec, plan and code. All three code claims behind them were verified by grep
-before recording: `BitLinear` appears in `bitlinear.py`, `convert.py`,
-`conversion_gap.py` and `mem_probe.py` and **nowhere else**; `eval.sh:8`
-hardcodes `pretrained=HuggingFaceTB/SmolLM2-360M`; `convert.py` sets
-`requires_grad` nowhere, so the tied embedding is fully plastic.
+- **18. Rename to "weight-state flips"** — done; `flab.flips` uses it throughout.
+- **19. KL-to-base as a competing predictor** — promised on two cards and
+  delivered on neither. **Now moot**: H1 is refuted on the flips/L2 ratio, so a
+  third predictor changes nothing. Recorded as a process failure, not a debt.
+- **20. Verify the twin's baseline capability** — ran as the item-20 gate and
+  **failed**: no pretrained task survives. That failure is what redirected phase 2
+  onto taught tasks.
+- **22. Decompose flip fraction** — done. Scale-driven flips are 0% per step,
+  rising only to 0.0084% at 1000-step intervals. The confound is real in principle
+  and negligible in practice at every resolution tested.
+- **23. Float-sliver covariate** — never logged. Moot with H1 refuted.
+- **24. Background flip-rate null arm** — done in phase 1d; floor 0.00879%/step at
+  lr 1e-4, with the sub-linear accumulation curve.
+- **29. 8-bit vs fp32 Adam flip-rate A/B** — deferred with a trigger that never
+  fired. Moot.
+- **9, 10, 15** — phase-2 design questions (forgetting normalisation, 1a
+  magnitudes, the Qwen rendering path) that the taught-task redesign bypassed.
+  Archival.
 
-- ~~21. Make the phase-2 harness BitLinear-aware, with a runtime assert.~~ —
-  **BUILT 2026-08-09**, before any phase-2 number exists, which was the review's
-  stated test of whether this project's error-catching has become preventive
-  rather than reactive. `src/flab/loading.py` is now the only supported way to
-  load a twin: `load_converted()` re-applies BitLinear at λ=1 when
-  `is_ternary_checkpoint()` says so, then `assert_ternary()` verifies the
-  *effective* weights take ≤3 distinct values and that every λ is exactly 1.
-  Detection keys on the run's own `convert.json` (searched in the checkpoint dir
-  and its parent, since weights live in `final/`), **not** on the directory name
-  — a path called `ternary-360m` proves nothing. A ternary run whose warmup never
-  completed raises rather than loading quietly, because its weights are not
-  ternary whatever it is called. `conversion_gap.py` now goes through this path
-  and exits if the ternary arm comes back with zero BitLinears. 11 tests in
-  `tests/test_loading.py`, including the vacuous-pass case (a float model
-  trivially satisfies "all BitLinears are ternary", so callers must check the
-  count, not the absence of an exception) and a sabotaged quantiser. Verified
-  end-to-end on the real checkpoint: 224 layers, guard passed.
+### New, from the last two days
 
-  **Wiring completed 2026-08-10.** The harness turned out to have exactly *one*
-  weight-loading site: `sequential.py::_load_base`. `probes.py`, `clmetrics.py`
-  and `generative.py` all *receive* a model rather than opening one, so they
-  needed no change — the earlier note that they "do not re-apply BitLinear" was
-  true but misleading. `_load_base` now detects a ternary checkpoint, loads it
-  through `flab.loading` **in fp32** (bf16 latents round ~85% of Adam updates to
-  zero at lr 1e-4, and phase 2 fine-tunes these), and raises if a checkpoint that
-  claims to be ternary comes back with zero BitLinear layers. Two more tests
-  cover it, including an assertion on the dtype.
-
-  Still outstanding: `eval.sh:8` hardcodes
-  `pretrained=HuggingFaceTB/SmolLM2-360M` and cannot load a twin at all. It is
-  not on the phase-2 critical path (the likelihood probes go through
-  `sequential.py`), but it must not be pointed at a twin and believed.
-
-  Original item, for the record:
-21. **Make the phase-2 harness BitLinear-aware, with a runtime assert.**
-    Checkpoints hold latent weights deliberately (`convert.py` docstring), so
-    any loader that does not re-apply `bl.convert(..., lambda_=1.0)` scores a
-    **float model and labels it ternary**. `conversion_gap.py:77-84` guards
-    this; `sequential.py`, `probes.py`, `clmetrics.py` and `eval.sh` do not, and
-    `eval.sh` cannot load the twin at all as written. Phase-2 *training* has the
-    same exposure — sequential fine-tuning of the ternary twin must run through
-    BitLinear at λ=1 or it silently fine-tunes a float model. Fix: one shared
-    load path, plus an assertion that effective weights take ≤3 distinct values,
-    run before any number is recorded. This is the same failure class as the
-    turn terminator and teacher forcing — the metric measuring a different
-    object than its name claims — and those cost us a retracted verdict each.
-22. **Decompose flip fraction; raw flips can confirm H1 artefactually.** The
-    absmean scale is per-tensor and recomputed every forward
-    (`bitlinear.py:40-41`), so a shift in mean |w| reclassifies every
-    near-threshold weight in a 921k–3.7M-weight tensor at once. Any fine-tuning
-    moves mean |w|, so raw flip fraction partly measures *amount of training* —
-    which correlates with forgetting trivially. Report scale-driven flips
-    (recomputed holding the stage-start scale frozen) separately from
-    latent-driven ones. If the moving threshold is the mechanism, that is a
-    result; it cannot be folded invisibly into the headline number.
-23. **[SPLIT] Log the float-sliver covariate now; DEFER the attribution
-    experiment** until H1 shows signal — the hybrid-checkpoint swap is eval-only
-    over checkpoints we already save, so it can run post hoc. The tied
-    embedding *is* the output head, so the ternary model can adapt or forget
-    with zero flips, and STE-noisy gradients in the ternary layers may bias
-    optimisation toward routing adaptation through the clean-gradient float
-    path — a confound correlated with the arm, not random noise. Spec §6 1d
-    instruments flips for the ternary arm and L2 for the float twin, but nothing
-    for the float components *of* the ternary model. Cheapest fix: log
-    embedding/head L2 and KL-to-base per stage as a covariate. Real control:
-    build hybrid checkpoints at each stage boundary (stage-k core + stage-(k−1)
-    embedding, and the reverse) and score both — eval-only, reuses checkpoints
-    we already save, and decomposes each stage's delta into flip-carried vs
-    sliver-carried. Without it, H1's attribution is an assumption.
-24. **Add a background flip-rate null arm.** At 66M tokens the ternary twin
-    enters phase 2 still mid-conversion (loss falling 5.464 → 5.235 over the
-    last 1000 steps) while the float twin sits near its pretrained optimum. Some
-    phase-2 flips will therefore be continued conversion rather than task
-    adaptation. Continue the twin briefly on more FineWeb-edu — no distribution
-    shift — and report task-induced flips over that floor, as the phase-1b null
-    control did for harness noise. This is the strongest reviewer objection to
-    the eventual post, and it is answerable cheaply.
-- ~~25. Pre-empt the 2-bit objection.~~ — **DROPPED to a write-up sentence**
-  2026-08-09 (Arley accepted the review's cuts). Not an item: one sentence in the
-  motivation section saying the claim comes from an unreproduced 15.5M-param
-  experiment an order of magnitude below our scale, and that "is ternary the best
-  low-bit point" is out of scope per spec §10.
-- ~~26. Decide and state the LR policy across twins.~~ — decided 2026-08-09
-  (delegated by Arley): **same LR in both arms**, following Nielsen et al., so the
-  pair differs in one variable. Microsoft's 6× is from-scratch pretraining at 1M
-  batches. See the delegated-decisions entry above.
-- ~~27. Check the double-normalisation.~~ — **DROPPED to a write-up sentence**
-  2026-08-09. The deviation is real (`convert.py` leaves the block's
-  `input_layernorm`/`post_attention_layernorm` in place, so `q/k/v/gate/up` are
-  normed twice and `o/down` only by ours), but both phase-2 arms are compared to
-  their *own* baselines, so it cannot confound the forgetting result. Say "we
-  retain the block norms rather than removing them as Microsoft's step 2
-  specifies" and move on. No 135M ablation.
-- ~~28. Ablate the λ warmup.~~ — **DROPPED** 2026-08-09. The conversion is
-  finished and its warmup cost is sunk; whether warmup helped has no bearing on
-  phase-2 validity. Cite the HF blog's measured "curves closely align" at this
-  scale. Revisit only if we ever reconvert.
-29. **[DEFERRED, with a trigger]** Run the 135M fp32-Adam vs 8-bit-Adam
-    comparison only if measured flip rates come out far from the published
-    ~0.05%/step, or if the H1 result is borderline. 8-bit Adam is unavoidable at
-    360M and both arms share it, so it cannot differ between twins. The sweep found
-    zero discussion of whether bitsandbytes 8-bit optimizer state interacts badly
-    with latent weights near the absmean threshold — where quantisation error in
-    the *optimizer* could flip effective weights. We depend on it for the 360M
-    memory budget. At minimum, a 135M fp32-Adam vs 8-bit-Adam flip-rate
-    comparison before flips become the headline metric.
-- ~~30. Zero-fraction check.~~ — **DONE 2026-08-10**: 0.3254 overall vs
-  Microsoft's ~0.3333, see the entry above. The baseline-comparison half remains
-  a write-up table row, not a task.
-
-30. [superseded, kept for context] **[SPLIT] Do the zero-fraction check now** (minutes, CPU — validates the
-    absmean implementation against Microsoft's "nearly uniform" ≈1/3); the
-    baseline comparison itself is a write-up table row, not a task.
-    BitNet's measured
-    per-step ternary flip rate is ~0.05% (DQT arXiv 2412.04787 §5.2); binary nets
-    have >50% "silent weights" never flipping (2407.05257). Our numbers should be
-    stated relative to these, not in isolation. Also check our zero fraction
-    against Microsoft's "nearly uniform" ≈1/3.
-- ~~31. Scope the forgetting claim to the converted baseline.~~ — **decided by
-  Arley, 2026-08-09: we measure forgetting of what the converted model
-  relearned**, not of the float model's original knowledge. Conversion may
-  already erase most of the latter (HF blog: a pretrained model and a random init
-  both start at loss ≈13 at λ=1; our own untrained-λ=1 is 15.95), so a claim about
-  the original knowledge would be mostly measuring conversion damage.
-
-  Consequences, all now binding on the phase-2 card:
-
-  - **t=0 for every forgetting curve is the post-conversion checkpoint**, per twin.
-    This is what spec §9 already specified; the decision makes it the *only*
-    reading, and rules out any comparison against the original SmolLM2-360M as a
-    forgetting number. `conversion_gap.py` reports that comparison separately and
-    it stays documentation, not a result.
-  - **Probes must be validated against the converted model, not the base model.**
-    If the ternary twin is at chance on a task at t=0 it has nothing to forget,
-    and a flat curve would mean "no capability", not "no forgetting" — a null we
-    would misread in exactly the direction that flatters the harness. This makes
-    item 20 a hard gate rather than a nice-to-have: measure the converted twin's
-    capability on each candidate probe *first*, and drop probes where it starts
-    at chance.
-  - **The post's thesis is scoped in one clause** — "a converted, under-trained
-    ternary pair at 360M, measured against its own post-conversion baseline" —
-    and everything inside that scope can then be stated firmly.
-  - The 2512.18934 result (quantised models *retain better* than FP16) is now
-    directly comparable to ours in framing, since it also measures from the
-    quantised model's own starting point rather than from a float ancestor.
+- **32. Score ternary models at batch 1** for anything logprob-based, or report
+  the batch size as part of the measurement. Not a task — a standing rule, from
+  the 2026-08-12 batch-invariance entry.
+- **33. Keep one seed's checkpoints until the write-up is signed off.** Phase 2b's
+  three corrections cost 25 minutes of forward passes instead of a full retrain
+  only because the pruner had not yet run. That was luck; make it policy.
+- **34. Assert invariance of the *reported quantity*, not of individual cells.**
+  Phase 2b pre-registered a per-cell batch-invariance gate, which fired on
+  irreducible noise and nearly caused a mid-run tolerance renegotiation. The
+  estimate was stable; the cells were never going to be.
