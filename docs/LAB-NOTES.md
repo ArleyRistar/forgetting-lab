@@ -3203,6 +3203,76 @@ comparable to phase 2's.
   contrast — the v1 cell sits inside the key mean it is measured against, so a
   planted 0.65 returned 0.557. Corrected by n/(n−1).
 
+## 2026-08-12 — ternary forward passes are not batch-invariant; activation quantisation is why
+
+Found incidentally in phase 2b (scoring the same prompts at batch 1 vs 8 moved
+ternary log-probs by ~1.5 nats and float by 4e-5), then characterised properly.
+64 prompts, token lengths 33–36, forward-only, fp32 throughout.
+
+### Drift against batch-1 scoring, by batch size
+
+| batch | ternary max | ternary median | float max | float median |
+| ---: | ---: | ---: | ---: | ---: |
+| 2 | 2.979 | **0.364** | 1.03e-4 | 1.14e-5 |
+| 4 | 2.831 | 0.341 | 1.11e-4 | 1.14e-5 |
+| 8 | 3.251 | 0.344 | 1.03e-4 | 1.14e-5 |
+| 16 | 3.209 | 0.341 | 1.14e-4 | 1.34e-5 |
+| 32 | 3.389 | 0.357 | 1.53e-4 | 1.34e-5 |
+
+**~30,000x more drift in the ternary twin**, and it is a *step change* at batch >
+1, not a gradient — batch 2 is already as bad as batch 32.
+
+### It is not padding
+
+Equal-length inputs, so no padding exists at all: ternary max 2.593, median
+**0.342** — unchanged. So this is batch *composition*, not ragged batches, and it
+cannot be fixed by bucketing or by an attention mask.
+
+### It is activation quantisation
+
+Ternary twin, one quantiser disabled at a time:
+
+| configuration | max | median |
+| --- | ---: | ---: |
+| both (as shipped) | 3.251 | 0.344 |
+| weights only (activation quant off) | 2.08e-4 | **1.53e-5** |
+| activations only (weight quant off) | 1.464 | 0.062 |
+
+**Disabling activation quantisation removes the drift entirely** — down to float
+levels. Weight quantisation alone produces none. Both together are ~5x worse than
+activations alone, so weight quantisation amplifies rather than causes.
+
+Mechanism: cuBLAS gives slightly different results for different batch shapes, at
+the 1e-7 level — which is all the float model ever shows. `activation_quant`
+(`bitlinear.py:46-49`) then rounds to int8 levels, so a perturbation near a
+rounding boundary flips a level by 1/127 ≈ 0.008 — an amplification of ~10^5 —
+and 224 quantised layers compound it into ~0.34 nats.
+
+### It does not change what the model says
+
+**0 argmax flips out of 64, in every condition tested.** So this is a
+log-probability phenomenon, not a correctness one: generation and greedy accuracy
+are unaffected, while anything logprob-based — perplexity, NLL probes, KL
+measurements, our own FE estimator — inherits it.
+
+### Why this matters beyond us
+
+Every likelihood-based evaluation of a BitNet-style model is batch-dependent at
+the ~0.3-nat level unless scored at batch 1, and nothing in our literature sweeps
+reported it. A perplexity difference of a few tenths of a nat between two ternary
+checkpoints is not necessarily a difference between the checkpoints.
+
+Practical rules, for us and for the write-up:
+
+1. **Score ternary models at batch 1** for anything logprob-based, or report the
+   batch size as part of the measurement.
+2. A ternary-vs-float logprob comparison must fix batch size in both arms; the
+   *float* arm's batch-invariance says nothing about the ternary arm's.
+3. Generation-based evals are unaffected — greedy output was stable throughout.
+
+This is what forced phase 2b's rescore at batch 1, where the ternary seed SE fell
+from 0.024 to 0.0085.
+
 ## Open items — the live list
 
 Closed:
