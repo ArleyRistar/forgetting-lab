@@ -350,6 +350,19 @@ probes, KL measurements. A few tenths of a nat between two ternary checkpoints m
 be your batch size rather than your checkpoints. Score at batch 1, or report the
 batch size as part of the measurement.
 
+**And this is not hypothetical in the tool most people use.** Separately, while
+verifying `--log_samples` in `lm-evaluation-harness`, we watched
+`--batch_size auto` OOM-thrash through eight allocation failures (backing off
+4.83 GB to 2.42 GB) and settle on a batch size of **2** — while the run header
+reported `batch_size: auto (64)`. The free-VRAM readings differed between
+consecutive failures, so the size it lands on depends on transient allocator
+state, not on any fixed property of the model.
+
+Combine the two and the failure mode is concrete: **two `lm_eval` runs of
+identical ternary weights, with `auto` batching, can be scored at different batch
+sizes and quietly disagree** — by more than many published deltas. Pin
+`--batch_size` to an integer for anything paired or repeated.
+
 ### What is and is not new here
 
 Batch-dependent inference in *float* LLMs is well documented — [Thinking
