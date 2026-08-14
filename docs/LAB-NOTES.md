@@ -3352,3 +3352,62 @@ settled questions.
   Phase 2b pre-registered a per-cell batch-invariance gate, which fired on
   irreducible noise and nearly caused a mid-run tolerance renegotiation. The
   estimate was stable; the cells were never going to be.
+
+## 2026-08-14 — `--log_samples` verified, and two instrument facts it exposed
+
+Engineering measurement, no card (hard rule 1 carve-out). Probe:
+`lm_eval --model hf --model_args pretrained=HuggingFaceTB/SmolLM2-360M,dtype=bfloat16
+--tasks arc_easy,hellaswag,ifeval --batch_size auto --limit 2 --log_samples`,
+run on the box 2026-08-14 18:21, output to a scratch path outside `outputs/`.
+~2 min wall clock.
+
+**`--log_samples` had never actually run.** It entered `scripts/eval.sh` in
+`89935a8`, *after* both phase-0 eval runs (both dated 2026-08-07). Every
+`outputs/eval/` directory holds `results_*.json` and nothing else. The flag
+being present in the script was not evidence that it produced files — an
+assumption worth this two-minute check, since the instrument-MDE pilot spends
+~13 GPU-h on the per-item records it emits.
+
+**It works, and the records are pairable** (measured). All three tasks wrote
+`samples_<task>_*.jsonl`; every row carries `doc_id`, `doc_hash`, `prompt_hash`
+and per-item scores:
+
+| task | pairable fields |
+| --- | --- |
+| arc_easy, hellaswag | `acc`, `acc_norm`, and `resps` = raw per-choice loglikelihoods |
+| ifeval | `prompt_level_{strict,loose}_acc` (bool); `inst_level_{strict,loose}_acc` (list of bool, one per instruction) |
+
+`doc_hash`/`prompt_hash` make item alignment between two runs checkable rather
+than assumed. The raw loglikelihoods in `resps` were not anticipated — they
+make a *continuous* paired margin available from the same run that produces
+binary accuracy, at no extra GPU cost.
+
+**The loglikelihoods are bf16-quantised** (measured). Observed values are exact
+multiples of 0.125 in the 16–32 range and 0.25 in the 32–64 range: `-20.125,
+-28.875, -24.75, -19.0, -38.0, -32.0, -22.0, -27.125`. That is bf16 mantissa
+resolution at those magnitudes, consistent with `dtype=bfloat16`. A per-item
+loglikelihood shift smaller than the local step is not representable in the log
+at all, so this is a hard floor on any paired logprob-margin instrument. Not yet
+characterised: whether a 400-step LoRA moves per-item margins above the floor is
+precisely the open question.
+
+**`--batch_size auto` is not reproducible across runs** (measured). The detector
+OOM-thrashed — 8 recorded allocation failures backing off 4.83 GB → 2.42 GB —
+and settled on **2**, while the run header simultaneously reported
+`batch_size: auto (64)`. The free-VRAM figures differ between consecutive
+failures, so the detected size depends on transient allocator state, not on a
+fixed property of the model. With open item 32 already recording that logprob
+values are batch-dependent, `auto` means two runs of identical weights can be
+scored at different batch sizes.
+
+### New open items
+
+- **35. Pin `--batch_size` to a fixed integer for any paired or repeated
+  logprob measurement.** `auto` is allocator-state-dependent (above) and item 32
+  makes batch size a scoring variable. `scripts/eval.sh` hardcodes `auto` today;
+  the instrument-MDE pilot card now pins it, but the script should follow.
+- **36. Characterise the bf16 logprob quantisation floor before leaning on a
+  paired-margin instrument.** Cheap: compare `resps` for the same items under
+  `dtype=bfloat16` vs `dtype=float32` on a `--limit` subset. If the floor
+  dominates the fine-tuning effect, the margin instrument is illusory and only
+  binary accuracy survives.
