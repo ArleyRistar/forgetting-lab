@@ -40,7 +40,7 @@ number, the number belongs in the notes with how it was measured.
 ## The lab box (`gs66-lab`)
 
 `ssh lab` — MSI GS66, RTX 3070 Ti Laptop 8 GB, headless Fedora 44, cannot
-suspend. Repo lives at `~/forgetting-lab`. It has its own repo-scoped GitHub
+suspend. Repo lives at `~/ternary-instruments`. It has its own repo-scoped GitHub
 deploy key, so it can push without a PAT.
 
 **Long runs go in tmux on the box** (`tmux new -As <name>`), never in a

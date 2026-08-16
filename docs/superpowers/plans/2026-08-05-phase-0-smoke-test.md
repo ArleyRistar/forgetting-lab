@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12+, uv, PyTorch (CUDA wheel from PyPI), transformers, TRL ≥0.20, peft, datasets, lm-eval, tensorboard, pytest.
 
-**Precondition:** `docs/bringup-checklist.md` is fully verified (GPU visible, headless, repo cloned at `~/forgetting-lab` on `gs66-lab`). This plan executes ON THE LAB BOX.
+**Precondition:** `docs/bringup-checklist.md` is fully verified (GPU visible, headless, repo cloned at `~/ternary-instruments` on `gs66-lab`). This plan executes ON THE LAB BOX.
 
 ## Global Constraints
 
@@ -439,7 +439,7 @@ Walk through `src/flab/train.py` and `src/flab/data.py` end to end in the sessio
 
 Run:
 ```bash
-git clone ~/forgetting-lab /tmp/flab-repro && cd /tmp/flab-repro
+git clone ~/ternary-instruments /tmp/flab-repro && cd /tmp/flab-repro
 uv sync && uv run pytest -q
 uv run python -m flab.train --output-dir /tmp/flab-repro-out --max-steps 20
 ```

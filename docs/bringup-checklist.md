@@ -118,7 +118,7 @@ curl -fsSL https://claude.ai/install.sh | bash    # Claude Code, then: claude lo
 ## 10. Repo transfer — D2
 
 **As built (2026-08-07): bundle over the LAN, then a repo-scoped deploy key for
-pushes.** The private repo is `github.com/ArleyRistar/forgetting-lab`; the box
+pushes.** The private repo is `github.com/ArleyRistar/ternary-instruments`; the box
 reaches it over SSH as `github-flab`, so it never holds an account-wide PAT.
 
 On the Zenbook:
@@ -131,11 +131,11 @@ scp /tmp/flab.bundle arley@gs66-lab.local:~
 On the lab box:
 
 ```bash
-git clone -b main ~/flab.bundle ~/forgetting-lab
+git clone -b main ~/flab.bundle ~/ternary-instruments
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_flab -C gs66-lab-forgetting-lab-deploy
 cat ~/.ssh/id_ed25519_flab.pub   # paste into repo Settings → Deploy keys, ALLOW WRITE
 printf 'Host github-flab\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/id_ed25519_flab\n  IdentitiesOnly yes\n' >> ~/.ssh/config
-git -C ~/forgetting-lab remote set-url origin github-flab:ArleyRistar/forgetting-lab.git
+git -C ~/ternary-instruments remote set-url origin github-flab:ArleyRistar/ternary-instruments.git
 ```
 
 Key details and the revoke command:
@@ -168,12 +168,12 @@ box for something the deploy key already does with far less reach.
 - [ ] SSH from Zenbook works with the lid closed, no password prompt
 - [ ] `systemctl get-default` → `multi-user.target`
 - [ ] `uv --version` and `claude --version` both print
-- [ ] `~/forgetting-lab` cloned; `git log --oneline` shows the spec commits
-- [ ] `git -C ~/forgetting-lab push --dry-run` → `Everything up-to-date`, which
+- [ ] `~/ternary-instruments` cloned; `git log --oneline` shows the spec commits
+- [ ] `git -C ~/ternary-instruments push --dry-run` → `Everything up-to-date`, which
       is what proves the deploy key works before a run depends on it
 - [ ] Machine survives 10 min lid-closed idle without suspending
 
-Then, on the lab box: `cd ~/forgetting-lab && claude`, and point the session at
+Then, on the lab box: `cd ~/ternary-instruments && claude`, and point the session at
 `docs/superpowers/plans/2026-08-05-phase-0-smoke-test.md`.
 
 ---

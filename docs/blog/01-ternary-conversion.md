@@ -1,8 +1,21 @@
 # Perplexity recovery is not capability recovery: converting a 360M model to ternary, with a control
 
-*Draft — Claude wrote this; Arley edits and decides what is claimed. Every number
-traces to `docs/LAB-NOTES.md`. Anything the notes mark retracted or inconclusive
-is written that way here.*
+## How this was made
+
+A hobby project on one 8 GB laptop GPU, over about a week. I set the direction,
+approved every experiment before it ran, and decide what gets claimed; Claude did
+the implementation, ran the jobs, and drafted this post. Every number here traces
+to [`docs/LAB-NOTES.md`](https://github.com/ArleyRistar/ternary-instruments/blob/main/docs/LAB-NOTES.md),
+which is the durable record and does not tidy up its own mistakes.
+
+That division is worth stating because of what the post is mostly about. Seven
+times, an instrument here measured something other than what its name claimed —
+a metric comparing softmax tails instead of memory, a "held-out" set that was not
+held out, a batch of padding attended as context. Three of those were caught by
+adversarial review passes rather than by the person or model who wrote the code,
+and one produced a published claim we had to retract. The section near the end
+called *What we got wrong* is not throat-clearing; it is the most transferable
+thing we have.
 
 ---
 
@@ -455,7 +468,7 @@ probabilistic one.
 
 ## Reproducing
 
-Everything is in [the repo](https://github.com/ArleyRistar/forgetting-lab) —
+Everything is in [the repo](https://github.com/ArleyRistar/ternary-instruments) —
 conversion, the twin, the flip instrument, the capability gate, the JSON behind
 every figure (`results/`), and the lab notes with every number, including the
 ones we retracted. `uv sync && uv run pytest` from a fresh clone: 149 pass, 44

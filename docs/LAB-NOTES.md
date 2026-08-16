@@ -3293,6 +3293,19 @@ Practical rules, for us and for the write-up:
 This is what forced phase 2b's rescore at batch 1, where the ternary seed SE fell
 from 0.024 to 0.0085.
 
+## 2026-08-16 — renamed: forgetting-lab -> ternary-instruments
+
+The repo is public and the name no longer described it. "forgetting-lab" named a
+hypothesis that is refuted (H1) and one that is retracted (H2); everything that
+survived is about measurement — the bf16 latent trap, perplexity-is-not-
+capability, flips-are-a-rescaled-L2, ternary batch-invariance, and four
+instruments that turned out to be measuring something other than their name.
+
+`github.com/ArleyRistar/ternary-instruments`. GitHub redirects the old URL, and
+the git remote is updated. **The Python package stays `flab`** — renaming it would
+touch every import, every test and every reference in these notes, for no benefit
+to anyone reading either.
+
 ## Open items — the live list
 
 **Cleaned up 2026-08-12, after the experimental programme closed.** Phase 2 and

@@ -1,11 +1,18 @@
-# forgetting-lab
+# ternary-instruments
 
-Hobby research on **catastrophic forgetting in ternary (1.58-bit) LLMs**, run on a
-single RTX 3070 Ti Laptop (8 GB). Arley Ristar directs; Claude implements.
+Instruments for measuring what happens to a small language model when you convert
+it to ternary (1.58-bit) weights — and a record of how often those instruments
+turned out to be measuring something else. Run on a single RTX 3070 Ti Laptop
+(8 GB). Arley Ristar directs; Claude implements.
 
-**The experimental programme is closed.** Its primary hypothesis was refuted, its
-secondary one retracted, and the write-up is at
+It began as **forgetting-lab**, asking whether ternary models forget differently.
+That programme is closed: the primary hypothesis was refuted and the secondary
+one retracted. What survived is about measurement, which is why the name changed.
+The write-up is at
 [`docs/blog/01-ternary-conversion.md`](docs/blog/01-ternary-conversion.md).
+
+The Python package is still `flab`, from the original name. Renaming it would
+touch every import, test and lab-notes reference for no reader benefit.
 
 ## What is here that might be useful to you
 
