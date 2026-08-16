@@ -10,7 +10,7 @@
 # matched a lingering shell of the agent's own tooling and hung for ~4h.
 set -u
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-cd /home/arley/forgetting-lab
+cd "$(git rev-parse --show-toplevel)"
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 
 mkdir -p outputs/phase2

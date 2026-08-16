@@ -3,7 +3,7 @@
 # process and OOM'd phase 2 at ~20 runs. Marker files, never pgrep.
 set -u
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-cd /home/arley/forgetting-lab
+cd "$(git rev-parse --show-toplevel)"
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 mkdir -p outputs/phase2b
 rm -f outputs/phase2b/CHAIN-{DONE,FAILED}
