@@ -1,0 +1,236 @@
+{
+  "n_eval": 200,
+  "seed": 0,
+  "criterion": "paired (control - true) answer NLL >= 3.0 SE",
+  "arms": {
+    "base": [
+      {
+        "task": "FOMC",
+        "n_scored": 200,
+        "true_nll": 5.166500661373139,
+        "control_nll": 5.180563164949417,
+        "paired_delta": 0.014062503576278687,
+        "se": 0.11266079157397851,
+        "n_se": 0.124821629422376,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 6.1
+      },
+      {
+        "task": "ScienceQA",
+        "n_scored": 200,
+        "true_nll": 1.7246101200580597,
+        "control_nll": 1.9753641122579575,
+        "paired_delta": 0.25075399219989775,
+        "se": 0.04090950002106411,
+        "n_se": 6.129480733589648,
+        "verdict": "KEEP",
+        "examples_available": null,
+        "seconds": 10.9
+      },
+      {
+        "task": "Py150",
+        "n_scored": 200,
+        "true_nll": 2.3123417192697526,
+        "control_nll": 3.9990338417887688,
+        "paired_delta": 1.6866921225190163,
+        "se": 0.1792320195162665,
+        "n_se": 9.410662933282063,
+        "verdict": "KEEP",
+        "examples_available": null,
+        "seconds": 14.4
+      },
+      {
+        "task": "NumGLUE-cm",
+        "n_scored": 41,
+        "true_nll": 4.2521594268519705,
+        "control_nll": 4.818398196522782,
+        "paired_delta": 0.5662387696708121,
+        "se": 0.37439216212343285,
+        "n_se": 1.5124215380452586,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 1.0
+      },
+      {
+        "task": "synth-conflict-a",
+        "n_scored": 50,
+        "true_nll": 6.369876480102539,
+        "control_nll": 6.4286264801025395,
+        "paired_delta": 0.05875,
+        "se": 0.21175898711140687,
+        "n_se": 0.2774380478552794,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 1.1
+      },
+      {
+        "task": "synth-disjoint-a",
+        "n_scored": 50,
+        "true_nll": 6.71008749961853,
+        "control_nll": 6.72758749961853,
+        "paired_delta": 0.0175,
+        "se": 0.19994450760760843,
+        "n_se": 0.08752428465974066,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 1.1
+      }
+    ],
+    "ternary": [
+      {
+        "task": "FOMC",
+        "n_scored": 200,
+        "true_nll": 5.9790151500701905,
+        "control_nll": 5.9430874156951905,
+        "paired_delta": -0.035927734375,
+        "se": 0.043642266926133405,
+        "n_se": -0.8232325427963992,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 22.6
+      },
+      {
+        "task": "ScienceQA",
+        "n_scored": 200,
+        "true_nll": 4.907300976514816,
+        "control_nll": 4.953429809808731,
+        "paired_delta": 0.046128833293914796,
+        "se": 0.05909158066459839,
+        "n_se": 0.780632922238793,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 33.4
+      },
+      {
+        "task": "Py150",
+        "n_scored": 200,
+        "true_nll": 8.288664755821229,
+        "control_nll": 8.305418050289154,
+        "paired_delta": 0.016753294467926026,
+        "se": 0.11374418906763831,
+        "n_se": 0.1472892338962796,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 41.6
+      },
+      {
+        "task": "NumGLUE-cm",
+        "n_scored": 41,
+        "true_nll": 5.883469802577321,
+        "control_nll": 5.940481569708847,
+        "paired_delta": 0.057011767131526295,
+        "se": 0.33294634804404766,
+        "n_se": 0.17123409662383152,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 4.5
+      },
+      {
+        "task": "synth-conflict-a",
+        "n_scored": 50,
+        "true_nll": 7.2381174182891845,
+        "control_nll": 7.230194425582885,
+        "paired_delta": -0.007922992706298829,
+        "se": 0.1878525568286643,
+        "n_se": -0.042176656203435095,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 5.2
+      },
+      {
+        "task": "synth-disjoint-a",
+        "n_scored": 50,
+        "true_nll": 7.215029268264771,
+        "control_nll": 7.2091723155975345,
+        "paired_delta": -0.005856952667236328,
+        "se": 0.1545113244078965,
+        "n_se": -0.037906300328993885,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 5.2
+      }
+    ],
+    "float": [
+      {
+        "task": "FOMC",
+        "n_scored": 200,
+        "true_nll": 5.442818115949631,
+        "control_nll": 5.451411859989166,
+        "paired_delta": 0.008593744039535523,
+        "se": 0.13429535247280483,
+        "n_se": 0.06399137335207322,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 5.1
+      },
+      {
+        "task": "ScienceQA",
+        "n_scored": 200,
+        "true_nll": 1.7402437484264375,
+        "control_nll": 1.9866022354364394,
+        "paired_delta": 0.24635848701000213,
+        "se": 0.0444224439315237,
+        "n_se": 5.545811198270829,
+        "verdict": "KEEP",
+        "examples_available": null,
+        "seconds": 10.7
+      },
+      {
+        "task": "Py150",
+        "n_scored": 200,
+        "true_nll": 2.449667888879776,
+        "control_nll": 4.156069612503051,
+        "paired_delta": 1.7064017236232758,
+        "se": 0.186013558581008,
+        "n_se": 9.173534104935401,
+        "verdict": "KEEP",
+        "examples_available": null,
+        "seconds": 14.0
+      },
+      {
+        "task": "NumGLUE-cm",
+        "n_scored": 41,
+        "true_nll": 4.630682924898659,
+        "control_nll": 4.977592276363838,
+        "paired_delta": 0.3469093514651787,
+        "se": 0.32384604361951963,
+        "n_se": 1.0712168893215064,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 0.9
+      },
+      {
+        "task": "synth-conflict-a",
+        "n_scored": 50,
+        "true_nll": 6.108809595108032,
+        "control_nll": 6.163340845108032,
+        "paired_delta": 0.05453125,
+        "se": 0.21644794641772475,
+        "n_se": 0.2519370172020929,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 1.0
+      },
+      {
+        "task": "synth-disjoint-a",
+        "n_scored": 50,
+        "true_nll": 6.473409395217896,
+        "control_nll": 6.481846895217895,
+        "paired_delta": 0.0084375,
+        "se": 0.20090536171400122,
+        "n_se": 0.04199738587370904,
+        "verdict": "DROP",
+        "examples_available": null,
+        "seconds": 1.0
+      }
+    ]
+  },
+  "gate_instrument_ok": true,
+  "base_discriminates": [
+    "Py150",
+    "ScienceQA"
+  ],
+  "surviving_probes": [],
+  "gate_passes": false
+}

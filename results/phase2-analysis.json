@@ -1,0 +1,230 @@
+{
+  "n_rows": 72,
+  "gates": {
+    "ternary/same": {
+      "n": 18,
+      "mean": 0.0019656368680100256,
+      "max_abs": 0.012622195140866098
+    },
+    "ternary/shift/conflict": {
+      "n": 9,
+      "mean": 7.947229519074737,
+      "max_abs": 13.061236904899998
+    },
+    "ternary/shift/disjoint": {
+      "n": 9,
+      "mean": 2.1512660904892575,
+      "max_abs": 3.4641051614566822
+    },
+    "float/same": {
+      "n": 18,
+      "mean": 1.4129563403141924e-05,
+      "max_abs": 0.0003842033608088968
+    },
+    "float/shift/conflict": {
+      "n": 9,
+      "mean": 11.636412161436192,
+      "max_abs": 16.394367299410334
+    },
+    "float/shift/disjoint": {
+      "n": 9,
+      "mean": 1.832060965034139,
+      "max_abs": 2.638502659145888
+    }
+  },
+  "harness_floor": 0.012622195140866098,
+  "gate_conflict_large_both_arms": true,
+  "h1": {
+    "ternary": {
+      "n": 18,
+      "forgetting_vs_flips": {
+        "n": 18,
+        "pearson": 0.5951788123150775,
+        "spearman": 0.8018575851393188
+      },
+      "forgetting_vs_l2": {
+        "n": 18,
+        "pearson": 0.6005621316553434,
+        "spearman": 0.7977296181630547
+      },
+      "forgetting_vs_concentration": {
+        "n": 18,
+        "pearson": -0.3309452467477248,
+        "spearman": -0.347781217750258
+      },
+      "r2_l2_only": 0.3606748739784098,
+      "r2_flips_only": 0.354237818628786,
+      "r2_l2_plus_concentration": 0.5375176677778803,
+      "r2_flips_plus_concentration": 0.5159619533992855
+    },
+    "float": {
+      "n": 18,
+      "forgetting_vs_flips": {
+        "n": 18,
+        "pearson": 0.8307986447712408,
+        "spearman": 0.7543859649122806
+      },
+      "forgetting_vs_l2": {
+        "n": 18,
+        "pearson": 0.7964242599094133,
+        "spearman": 0.7647058823529412
+      },
+      "forgetting_vs_concentration": {
+        "n": 18,
+        "pearson": 0.7164455001559156,
+        "spearman": 0.6924664602683178
+      },
+      "r2_l2_only": 0.6342916017722566,
+      "r2_flips_only": 0.69022638815373,
+      "r2_l2_plus_concentration": 0.6394417769511085,
+      "r2_flips_plus_concentration": 0.6908633330226828
+    }
+  },
+  "h2": {
+    "conflict-25": {
+      "ternary": [
+        2.336661533963925,
+        0.15128971925961307,
+        3
+      ],
+      "float": [
+        4.01621430156613,
+        0.4159893410604936,
+        3
+      ],
+      "accuracies": {
+        "ternary": 0.09999999999999999,
+        "float": 0.006666666666666667
+      },
+      "reportable_as_retention": true,
+      "guard_reasons": []
+    },
+    "conflict-100": {
+      "ternary": [
+        9.144613108289485,
+        0.7395063903774044,
+        3
+      ],
+      "float": [
+        15.088761800904917,
+        0.5639411260972573,
+        3
+      ],
+      "accuracies": {
+        "ternary": 0.0,
+        "float": 0.0
+      },
+      "reportable_as_retention": false,
+      "guard_reasons": [
+        "accuracy is at floor (0.0) in every arm ({'ternary': 0.0, 'float': 0.0}) \u2014 both models have forgotten completely, so the NLL gap is tail mass, not retention",
+        "NLL is >2.0 nats above chance (2.0794) for {'ternary': 9.14467030301981, 'float': 15.0887945323948} \u2014 differences up here compare softmax tails, and a model at 7 nats above chance is not 'remembering less', it is confidently wrong"
+      ]
+    },
+    "conflict-300": {
+      "ternary": [
+        12.3604139149708,
+        0.6141266166420657,
+        3
+      ],
+      "float": [
+        15.804260381837532,
+        0.5702237615866005,
+        3
+      ],
+      "accuracies": {
+        "ternary": 0.0,
+        "float": 0.0
+      },
+      "reportable_as_retention": false,
+      "guard_reasons": [
+        "accuracy is at floor (0.0) in every arm ({'ternary': 0.0, 'float': 0.0}) \u2014 both models have forgotten completely, so the NLL gap is tail mass, not retention",
+        "NLL is >2.0 nats above chance (2.0794) for {'ternary': 12.360471109701125, 'float': 15.804293113327414} \u2014 differences up here compare softmax tails, and a model at 7 nats above chance is not 'remembering less', it is confidently wrong"
+      ]
+    },
+    "disjoint-25": {
+      "ternary": [
+        1.0615917524531444,
+        0.1353200804249576,
+        3
+      ],
+      "float": [
+        1.1014303008088853,
+        0.07810495430510966,
+        3
+      ],
+      "accuracies": {
+        "ternary": 0.64,
+        "float": 0.68
+      },
+      "reportable_as_retention": true,
+      "guard_reasons": []
+    },
+    "disjoint-100": {
+      "ternary": [
+        2.2112309714987837,
+        0.1426922427012454,
+        3
+      ],
+      "float": [
+        2.094486605437535,
+        0.5339267768003318,
+        3
+      ],
+      "accuracies": {
+        "ternary": 0.52,
+        "float": 0.6000000000000001
+      },
+      "reportable_as_retention": true,
+      "guard_reasons": []
+    },
+    "disjoint-300": {
+      "ternary": [
+        3.1809755475158457,
+        0.44782458061069,
+        3
+      ],
+      "float": [
+        2.300265988855996,
+        0.20293300838155345,
+        3
+      ],
+      "accuracies": {
+        "ternary": 0.4000000000000001,
+        "float": 0.6
+      },
+      "reportable_as_retention": true,
+      "guard_reasons": []
+    }
+  },
+  "flips_per_l2": {
+    "ternary/shift": {
+      "n": 18,
+      "mean": 0.00020927537419499222,
+      "min": 0.00020075815939492618,
+      "max": 0.00022236154986658328
+    },
+    "ternary/same": {
+      "n": 18,
+      "mean": 0.00021154509204677162,
+      "min": 0.00020538245292972283,
+      "max": 0.00022109807594259347
+    },
+    "float/shift": {
+      "n": 18,
+      "mean": 0.00020450379399788242,
+      "min": 0.00019792646193546643,
+      "max": 0.00021559956332804555
+    },
+    "float/same": {
+      "n": 18,
+      "mean": 0.00018585804973257354,
+      "min": 0.00016899417484693015,
+      "max": 0.0002099420539388265
+    }
+  },
+  "ternary_scale_share": {
+    "n": 36,
+    "mean": 2.7870530292751664e-06,
+    "max": 9.551473420902656e-06
+  }
+}

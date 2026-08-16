@@ -455,9 +455,11 @@ probabilistic one.
 
 ## Reproducing
 
-Everything is in [the repo] — conversion, the twin, the flip instrument, the
-capability gate, and the lab notes with every number, including the ones we
-retracted.
+Everything is in [the repo](https://github.com/ArleyRistar/forgetting-lab) —
+conversion, the twin, the flip instrument, the capability gate, the JSON behind
+every figure (`results/`), and the lab notes with every number, including the
+ones we retracted. `uv sync && uv run pytest` from a fresh clone: 149 pass, 44
+skip until you fetch the TRACE data.
 
 ```bash
 uv run python -m flab.convert --model HuggingFaceTB/SmolLM2-360M --mode ternary \

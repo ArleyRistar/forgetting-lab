@@ -1,0 +1,59 @@
+{
+  "n_blocks": 64,
+  "seq_len": 1024,
+  "heldout_seed": 0,
+  "skip_rows": 250000,
+  "train_rows_estimate": 69400,
+  "disjointness": "structural: same stream as training, skipped past it",
+  "corpora": {
+    "fineweb_heldout": {
+      "base": {
+        "loss": 2.5257476888677126,
+        "ppl": 12.500239372253418,
+        "n_tokens": 65472
+      },
+      "float": {
+        "loss": 2.537332260713549,
+        "ppl": 12.645890235900879,
+        "n_tokens": 65472
+      },
+      "ternary": {
+        "loss": 5.128832267992424,
+        "ppl": 168.8198699951172,
+        "n_tokens": 65472
+      }
+    },
+    "wikitext103_test": {
+      "base": {
+        "loss": 2.578306625082812,
+        "ppl": 13.174810409545898,
+        "n_tokens": 65472
+      },
+      "float": {
+        "loss": 2.6707474530500632,
+        "ppl": 14.450767517089844,
+        "n_tokens": 65472
+      },
+      "ternary": {
+        "loss": 6.297568894551297,
+        "ppl": 543.2495727539062,
+        "n_tokens": 65472
+      }
+    },
+    "seconds_base": 11.3,
+    "seconds_float": 8.5,
+    "seconds_ternary": 37.8
+  },
+  "gaps": {
+    "fineweb_heldout": {
+      "ternary_vs_base": 2.6030845791247113,
+      "ternary_vs_float_twin": 2.5915000072788748,
+      "float_twin_vs_base": 0.0115845718458365
+    },
+    "wikitext103_test": {
+      "ternary_vs_base": 3.719262269468485,
+      "ternary_vs_float_twin": 3.626821441501234,
+      "float_twin_vs_base": 0.09244082796725106
+    }
+  }
+}

@@ -14,6 +14,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 OUT = Path("docs/blog/figures")
+# `results/` is the committed copy; `outputs/` is the gitignored working tree.
+# Prefer whichever exists, so the figures regenerate from a fresh clone — they
+# did not, before, and the post tells people to clone it.
+SRC = Path("results") if Path("results/convert-conversion-gap.json").is_file() else None
+
+
+def load(name: str) -> dict:
+    if SRC is not None:
+        return json.loads((SRC / name.replace("/", "-")).read_text())
+    return json.loads((Path("outputs") / name).read_text())
 INK, MUTED = "#1a1a1a", "#6b6b6b"
 TERNARY, FLOAT, BASE = "#c1440e", "#2b6cb0", "#8a8a8a"
 
@@ -27,7 +37,7 @@ plt.rcParams.update({
 
 
 def fig1_conversion_gap():
-    g = json.loads(Path("outputs/convert/conversion-gap.json").read_text())
+    g = load("convert/conversion-gap.json")
     c = g["corpora"]
     fig, ax = plt.subplots(figsize=(7.2, 3.9))
     corpora = [("fineweb_heldout", "FineWeb-edu (held out)"),
@@ -54,7 +64,7 @@ def fig1_conversion_gap():
 
 
 def fig2_capability_gate():
-    d = json.loads(Path("outputs/null/capability-gate.json").read_text())
+    d = load("null/capability-gate.json")
     tasks = [r["task"] for r in d["arms"]["base"]
              if not r["task"].startswith("synth")]
     fig, ax = plt.subplots(figsize=(7.2, 3.9))
@@ -82,7 +92,7 @@ def fig2_capability_gate():
 
 
 def fig3_batch_drift():
-    s = json.loads(Path("outputs/ternary-batch-stability.json").read_text())
+    s = load("ternary-batch-stability.json")
     fig, ax = plt.subplots(figsize=(7.2, 4.1))
     for arm, label, colour in (("ternary", "ternary twin", TERNARY),
                                ("float", "float twin", FLOAT)):
