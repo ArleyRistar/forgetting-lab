@@ -5,6 +5,11 @@ Arley directs, Claude implements. Read `docs/superpowers/specs/2026-08-05-forget
 (the spec) before any substantive change — it is the authority on what this
 project is for and what is deliberately out of scope.
 
+**If you are an agent arriving here cold:** read [`FINDINGS.md`](FINDINGS.md)
+first. It is the transferable results in dense form — numbers, conditions,
+verification paths, and the dead ends — and it will save you reading the notebook
+to find out what is already known.
+
 ## The two documents that matter
 
 | file | holds | when to read |

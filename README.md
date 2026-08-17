@@ -14,6 +14,11 @@ The write-up is at
 The Python package is still `flab`, from the original name. Renaming it would
 touch every import, test and lab-notes reference for no reader benefit.
 
+**Looking for something usable without reading the notebook?**
+[`FINDINGS.md`](FINDINGS.md) is the dense version: every transferable result with
+its number, the conditions it holds under, and where to verify it — including the
+dead ends and the one retraction, so nobody rebuilds them.
+
 ## What is here that might be useful to you
 
 - **A ternary conversion recipe with a data-matched float twin** — the same base
